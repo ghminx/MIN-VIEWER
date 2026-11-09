@@ -1,0 +1,9 @@
+LibreOffice 26.2.6.3, commit 8221e31b3ac356a1623c672912a3d2b492f7e3d1
+Source: https://git.libreoffice.org/core/
+
+org.libreoffice.kit JNI 바인딩의 출처는 android/Bootstrap/src임.
+LibreOfficeKit.java에서 표준 출력·오류 로그 전환 및 앱 데이터 경로 로그를 제거하고,
+엔진 전용 캐시 경로를 지정함. 원본 소스의 MPL 고지문을 유지함.
+
+개발용 빌드임. 포함된 네이티브 의존성과 글꼴의 전체 고지 및
+소스 배포 조건은 아직 검토되지 않음.

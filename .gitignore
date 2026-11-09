@@ -1,0 +1,5 @@
+.research/
+.gradle/
+local.properties
+app/build/
+tests/external-sender/**/build/
