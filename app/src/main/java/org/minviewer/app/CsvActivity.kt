@@ -3,6 +3,7 @@ package org.minviewer.app
 import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
+import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -11,6 +12,8 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import android.widget.EditText
+import android.text.InputType
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStreamReader
@@ -22,7 +25,9 @@ import java.nio.charset.CodingErrorAction
 import java.util.concurrent.Executors
 
 class CsvActivity : Activity() {
+    private data class Cursor(val reader: PushbackReader, val charset: String, var nextPage: Int, var nextRow: List<String>?)
     private val worker = Executors.newSingleThreadExecutor()
+    private var cursor: Cursor? = null
     private lateinit var status: TextView
     private lateinit var list: ListView
     private lateinit var previous: Button
@@ -34,12 +39,30 @@ class CsvActivity : Activity() {
     @Volatile private var closed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemePreferences.apply(this)
         super.onCreate(savedInstanceState)
-        page = savedInstanceState?.getInt("page") ?: 0
-        encoding = savedInstanceState?.getString("encoding")
-        val toolbar = LinearLayout(this)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        page = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
+        encoding = savedInstanceState?.getString("encoding") ?: intent.getStringExtra("restore_encoding")
+            ?.takeIf { it == "UTF-8" || it == "CP949" }
+        val toolbar = LinearLayout(this).apply {
+            setBackgroundColor(Color.rgb(25, 45, 77))
+            minimumWidth = (240 * resources.displayMetrics.density).toInt()
+        }
+        val toolbarScroll = HorizontalScrollView(this).apply {
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = true
+            addView(toolbar)
+        }
         fun addButton(label: String, action: () -> Unit): Button = Button(this).apply {
             text = label
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.TRANSPARENT)
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(0, 0, 0, 0)
             setOnClickListener { action() }
             toolbar.addView(this, if (resources.configuration.screenWidthDp >= 600)
                 LinearLayout.LayoutParams((96 * resources.displayMetrics.density).toInt(), -2)
@@ -48,6 +71,16 @@ class CsvActivity : Activity() {
         addButton("뒤로") { finish() }
         previous = addButton("이전") { if (page > 0) loadPage(page - 1) }
         next = addButton("다음") { loadPage(page + 1) }
+        addButton("이동") {
+            val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; hint = "행 번호" }
+            android.app.AlertDialog.Builder(this).setTitle("행으로 이동").setView(input)
+                .setNegativeButton("취소", null).setPositiveButton("확인") { _, _ ->
+                    val row = input.text.toString().toLongOrNull()
+                    if (row == null || row !in 1..Int.MAX_VALUE.toLong()) {
+                        status.text = "CSV 오류: 1 이상의 행 번호를 입력해 주세요."
+                    } else loadPage(((row - 1) / PAGE_SIZE).toInt(), ((row - 1) % PAGE_SIZE).toInt())
+                }.show()
+        }
         encodingButton = addButton("인코딩") {
             val options = arrayOf("UTF-8", "CP949")
             android.app.AlertDialog.Builder(this).setTitle("문자 인코딩").setItems(options) { _, index ->
@@ -55,7 +88,10 @@ class CsvActivity : Activity() {
                 loadPage(0)
             }.show()
         }
-        status = TextView(this).apply { text = "CSV를 불러오는 중입니다." }
+        status = TextView(this).apply {
+            text = "CSV를 불러오는 중입니다."
+            setPadding(12, 8, 12, 8)
+        }
         list = ListView(this)
         val scroller = HorizontalScrollView(this).apply { addView(list) }
         setContentView(LinearLayout(this).apply {
@@ -65,16 +101,17 @@ class CsvActivity : Activity() {
                 view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
                 insets
             }
-            addView(toolbar)
+            addView(toolbarScroll)
             addView(status)
             addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
         })
         loadPage(page)
     }
 
-    private fun loadPage(index: Int) {
+    private fun loadPage(index: Int, rowInPage: Int = 0) {
         val uri = intent.data ?: run { status.text = "CSV 오류: 파일이 없습니다."; return }
         val request = ++generation
+        val previousHasNext = next.isEnabled
         previous.isEnabled = false
         next.isEnabled = false
         encodingButton.isEnabled = false
@@ -82,51 +119,69 @@ class CsvActivity : Activity() {
         val selectedEncoding = encoding
         worker.execute {
             try {
-                val input = BufferedInputStream(contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다."))
-                input.use { stream ->
-                    stream.mark(32769)
-                    val sample = ByteArray(32768)
-                    var used = 0
-                    while (used < sample.size) {
-                        val count = stream.read(sample, used, sample.size - used)
-                        if (count < 0) break
-                        used += count
+                val existing = cursor
+                val reusable = existing != null && existing.nextPage == index && existing.charset == selectedEncoding
+                val current = if (reusable) existing!! else {
+                    existing?.reader?.close()
+                    cursor = null
+                    openCursor(uri, selectedEncoding).also { cursor = it }
+                }
+                if (!reusable) {
+                    var skipped = 0L
+                    val target = index.toLong() * PAGE_SIZE
+                    while (skipped < target && !closed && request == generation) {
+                        if (readRow(current.reader) == null) break
+                        skipped++
                     }
-                    stream.reset()
-                    val charset = selectedEncoding ?: detectEncoding(sample, used)
-                    val decoder = Charset.forName(charset).newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-                    val reader = PushbackReader(InputStreamReader(stream, decoder), 1)
-                    val first = reader.read()
-                    if (first != -1 && first != '\ufeff'.code) reader.unread(first)
-                    val rows = ArrayList<List<String>>()
-                    var row = 0
-                    var hasNext = false
-                    while (!closed && request == generation) {
-                        val cells = readRow(reader) ?: break
-                        if (row >= index * PAGE_SIZE) {
-                            if (rows.size == PAGE_SIZE) { hasNext = true; break }
-                            rows.add(cells)
-                        }
-                        row++
-                    }
-                    if (!closed) runOnUiThread {
-                        if (!closed && request == generation) {
-                            page = index
-                            encoding = charset
-                            val columns = rows.maxOfOrNull { it.size } ?: 1
-                            val width = (160 * resources.displayMetrics.density).toInt()
-                            list.layoutParams = android.widget.FrameLayout.LayoutParams(maxOf(resources.displayMetrics.widthPixels, columns * width), -1)
-                            list.adapter = RowAdapter(rows, width)
-                            setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
+                }
+                val rows = ArrayList<List<String>>()
+                current.nextRow?.let { rows.add(it) }
+                current.nextRow = null
+                while (rows.size < PAGE_SIZE && !closed && request == generation) {
+                    rows.add(readRow(current.reader) ?: break)
+                }
+                if (closed || request != generation) {
+                    current.reader.close()
+                    cursor = null
+                    return@execute
+                }
+                current.nextRow = if (rows.isNotEmpty()) readRow(current.reader) else null
+                current.nextPage = index + 1
+                val hasNext = current.nextRow != null
+                if (!hasNext) {
+                    current.reader.close()
+                    cursor = null
+                }
+                val charset = current.charset
+                if (!closed) runOnUiThread {
+                    if (!closed && request == generation) {
+                        if ((index > 0 && rows.isEmpty()) || (rows.isNotEmpty() && rowInPage >= rows.size)) {
+                            status.text = "CSV 오류: 해당 행이 없습니다."
                             previous.isEnabled = page > 0
-                            next.isEnabled = hasNext
+                            next.isEnabled = previousHasNext
                             encodingButton.isEnabled = true
-                            status.text = if (rows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.size}행 · $charset"
+                            return@runOnUiThread
                         }
+                        page = index
+                        encoding = charset
+                        val recent = RecentDocuments(this@CsvActivity)
+                        recent.add(uri, intent.getStringExtra("name") ?: "document")
+                        recent.updateView(uri, page, charset, 1f)
+                        val columns = rows.maxOfOrNull { it.size } ?: 1
+                        val width = (160 * resources.displayMetrics.density).toInt()
+                        list.layoutParams = android.widget.FrameLayout.LayoutParams(maxOf(resources.displayMetrics.widthPixels, columns * width), -1)
+                        list.adapter = RowAdapter(rows, width)
+                        list.setSelection(rowInPage.coerceAtMost(rows.lastIndex.coerceAtLeast(0)))
+                        setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
+                        previous.isEnabled = page > 0
+                        next.isEnabled = hasNext
+                        encodingButton.isEnabled = true
+                        status.text = if (rows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.size}행 · $charset"
                     }
                 }
             } catch (error: Exception) {
+                try { cursor?.reader?.close() } catch (closeError: IOException) { error.addSuppressed(closeError) }
+                cursor = null
                 if (!closed) runOnUiThread {
                     if (!closed && request == generation) {
                         val message = if (error is java.nio.charset.CharacterCodingException) {
@@ -138,6 +193,31 @@ class CsvActivity : Activity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun openCursor(uri: Uri, selectedEncoding: String?): Cursor {
+        val stream = BufferedInputStream(contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다."))
+        try {
+            stream.mark(32769)
+            val sample = ByteArray(32768)
+            var used = 0
+            while (used < sample.size) {
+                val count = stream.read(sample, used, sample.size - used)
+                if (count < 0) break
+                used += count
+            }
+            stream.reset()
+            val charset = selectedEncoding ?: detectEncoding(sample, used)
+            val decoder = Charset.forName(charset).newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+            val reader = PushbackReader(InputStreamReader(stream, decoder), 1)
+            val first = reader.read()
+            if (first != -1 && first != '\ufeff'.code) reader.unread(first)
+            return Cursor(reader, charset, 0, null)
+        } catch (error: Exception) {
+            stream.close()
+            throw error
         }
     }
 
@@ -223,7 +303,8 @@ class CsvActivity : Activity() {
     override fun onDestroy() {
         closed = true
         generation++
-        worker.shutdownNow()
+        worker.execute { cursor?.reader?.close(); cursor = null }
+        worker.shutdown()
         super.onDestroy()
     }
 

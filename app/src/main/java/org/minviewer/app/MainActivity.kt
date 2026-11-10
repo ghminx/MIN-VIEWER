@@ -20,6 +20,7 @@ import android.widget.FrameLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import android.text.InputType
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.UUID
@@ -41,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var hwpSearch: Button
     private lateinit var hwpNextSearch: Button
     private lateinit var hwpModes: LinearLayout
+    private lateinit var viewerControls: ViewerControls
     private var documentUri: Uri? = null
     private var pageCount = 0
     private var pageIndex = 0
@@ -55,21 +57,29 @@ class MainActivity : Activity() {
     private var incomingMimeType: String? = null
     private var loadGeneration = 0
     private var hwpMode = "continuous"
+    private var hwpEquationWarning = false
+    private var hwpChartWarning = false
+    private var hwpZoom = 1f
+    private var hwpSearchMessage = ""
+    private var pendingHwpZoomRestore = false
     @Volatile private var documentSource: DocumentSource? = null
 
     private data class DocumentSource(val token: String, val uri: Uri)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemePreferences.apply(this)
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         documentUri = savedInstanceState?.getString("uri")?.let(Uri::parse)
         selectedName = savedInstanceState?.getString("name") ?: ""
         resumeAfterOffice = savedInstanceState?.getBoolean("resumeAfterOffice") ?: false
         waitingForFallback = savedInstanceState?.getBoolean("waitingForFallback") ?: false
-        pageIndex = savedInstanceState?.getInt("page") ?: 0
+        pageIndex = if (savedInstanceState?.getBoolean("mobileWord") == true) savedInstanceState.getInt("originalWordPage")
+            else savedInstanceState?.getInt("page") ?: 0
         listVisible = savedInstanceState?.getBoolean("list") ?: false
-        hwpMode = savedInstanceState?.getString("hwpMode") ?: "continuous"
+        hwpMode = savedInstanceState?.getString("hwpMode")?.takeIf { it in listOf("continuous", "single", "spread") } ?: "continuous"
+        hwpZoom = savedInstanceState?.getFloat("hwpZoom") ?: 1f
         recent = RecentDocuments(this)
         buildScreen()
         if (savedInstanceState == null) receiveDocument(intent)
@@ -110,8 +120,12 @@ class MainActivity : Activity() {
             return
         }
         documentUri = uri
+        openingRecent = false
+        releaseBrowser()
         incomingMimeType = incoming.type
         pageIndex = 0
+        hwpMode = "continuous"
+        hwpZoom = 1f
         waitingForFallback = false
         resumeAfterOffice = false
         autoOpenOffice = true
@@ -125,38 +139,28 @@ class MainActivity : Activity() {
             view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
             insets
         }
-        val toolbar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf(
-            button("홈") { showHome() },
-            button("파일 열기") { pickDocument() },
-            button("목록") { listVisible = !listVisible; updateLayout() },
-            button("이전") { movePage(-1) },
-            button("다음") { movePage(1) }
-        ).forEach {
-            toolbar.addView(it, toolLayout())
-        }
-        container.addView(toolbar)
-        indicator = TextView(this).apply { text = "0 / 0"; setPadding(12, 0, 12, 4) }
         hwpSearch = button("검색") { searchHwp() }.apply { visibility = View.GONE }
         hwpNextSearch = button("다음 결과") {
             val generation = loadGeneration
             browser?.evaluateJavascript("window.nextHwpResult()") { value -> showHwpSearchResult(value, generation) }
         }.apply { visibility = View.GONE }
-        container.addView(LinearLayout(this).apply {
-            addView(indicator, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(hwpSearch)
-            addView(hwpNextSearch)
-        })
+        viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpSearch.visibility == View.VISIBLE) searchHwp() },
+            { listVisible = !listVisible; updateLayout() }, { movePage(-1) }, { movePage(1) },
+            { browser?.zoomOut() }, { browser?.zoomIn() },
+            listOf("연속 보기" to { changeHwpMode("continuous") }, "한쪽 보기" to { changeHwpMode("single") },
+                "두쪽 보기" to { changeHwpMode("spread") },
+                "다음 검색 결과" to { if (hwpNextSearch.visibility == View.VISIBLE) hwpNextSearch.performClick() },
+                "다른 파일 열기" to { pickDocument() }))
+        indicator = viewerControls.status
+        container.addView(viewerControls)
         hwpModes = LinearLayout(this).apply {
             visibility = View.GONE
             listOf("연속" to "continuous", "한쪽" to "single", "두쪽" to "spread").forEach { (label, value) ->
                 addView(button(label) {
-                    hwpMode = value
-                    browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(value)},$pageIndex)", null)
+                    changeHwpMode(value)
                 }, toolLayout())
             }
         }
-        container.addView(hwpModes)
         officeTrial = button("LibreOffice 시험") {
             documentUri?.let { uri ->
                 releaseBrowser()
@@ -167,7 +171,14 @@ class MainActivity : Activity() {
                 waitingForFallback = false
                 legacyTrial.visibility = View.GONE
                 resumeAfterOffice = true
-                startActivity(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", selectedName).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                @Suppress("DEPRECATION")
+                val saved = recent.all().firstOrNull { it.uri == uri }
+                startActivityForResult(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", selectedName)
+                    .putExtra("restore_page", if (saved?.mode == "mobile-word") saved.x else saved?.page ?: 0)
+                    .putExtra("restore_zoom", if (saved?.mode == "mobile-word") 1f else saved?.zoom ?: 1f)
+                    .putExtra("restore_x", if (saved?.mode == "mobile-word") 0 else saved?.x ?: 0)
+                    .putExtra("restore_y", if (saved?.mode == "mobile-word") 0 else saved?.y ?: 0)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 3)
             }
         }.apply { visibility = View.GONE }
         container.addView(officeTrial)
@@ -181,6 +192,7 @@ class MainActivity : Activity() {
         content = LinearLayout(this)
         list = ListView(this).apply {
             setOnItemClickListener { _, _, position, _ ->
+                pageIndex = position
                 showPage(position)
                 if (windowWidthDp() < 840) { listVisible = false; updateLayout() }
             }
@@ -189,11 +201,14 @@ class MainActivity : Activity() {
         emptyMessage = TextView(this).apply { text = "파일을 선택해 주세요."; setPadding(24, 24, 24, 24) }
         content.addView(emptyMessage, LinearLayout.LayoutParams(0, -1, 1f))
         container.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+        container.addView(viewerControls.takeBottom())
         home = HomeScreen(this, recent, { pickDocument() }) { item ->
             openingRecent = true
             documentUri = item.uri
             incomingMimeType = null
-            pageIndex = 0
+            pageIndex = if (item.mode == "mobile-word") item.x else item.page
+            hwpMode = item.mode.takeIf { it in listOf("continuous", "single", "spread") } ?: "continuous"
+            hwpZoom = item.zoom
             waitingForFallback = false
             autoOpenOffice = true
             loadDocument()
@@ -207,8 +222,17 @@ class MainActivity : Activity() {
         updateLayout()
     }
 
+    private fun changeHwpMode(value: String) {
+        if (hwpModes.visibility != View.VISIBLE) return
+        hwpMode = value
+        updateHwpNotice()
+        browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(value)},$pageIndex)", null)
+        documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
+    }
+
     private fun showHome() {
         loadGeneration++
+        viewerControls.setDocumentNotice("")
         documentUri = null
         documentSource = null
         waitingForFallback = false
@@ -227,6 +251,7 @@ class MainActivity : Activity() {
     private fun createBrowser() {
         if (browser != null) return
         val generation = ++browserGeneration
+        pendingHwpZoomRestore = kotlin.math.abs(hwpZoom - 1f) > 0.005f
         browser = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.allowFileAccess = false
@@ -236,6 +261,12 @@ class MainActivity : Activity() {
             settings.domStorageEnabled = false
             addJavascriptInterface(EngineBridge(generation), "Android")
             webViewClient = object : WebViewClient() {
+                override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
+                    if (generation != browserGeneration || pageCount == 0 || pendingHwpZoomRestore ||
+                        !(selectedName.endsWith(".hwp", true) || selectedName.endsWith(".hwpx", true))) return
+                    hwpZoom = newScale / resources.displayMetrics.density
+                    showHwpPosition()
+                }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                     val uri = request.url
@@ -243,6 +274,18 @@ class MainActivity : Activity() {
                         return WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(byteArrayOf()))
                     }
                     val path = uri.path?.removePrefix("/") ?: ""
+                    if (path.startsWith("user-fonts/")) {
+                        val id = path.removePrefix("user-fonts/")
+                        if (!id.matches(Regex("[0-9a-f]{64}"))) {
+                            return WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(byteArrayOf()))
+                        }
+                        return try {
+                            val stream = UserFonts(this@MainActivity).file(id).inputStream()
+                            WebResourceResponse("font/ttf", null, 200, "OK", mapOf("Access-Control-Allow-Origin" to "*"), stream)
+                        } catch (_: java.io.IOException) {
+                            WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(byteArrayOf()))
+                        }
+                    }
                     if (path.startsWith("document/")) {
                         val source = documentSource
                         if (source == null || path != "document/${source.token}") {
@@ -330,7 +373,12 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 2 || requestCode == 3) {
-            if (resultCode == RESULT_OK) data?.data?.let { recent.add(it, data.getStringExtra("name") ?: selectedName) }
+            if (resultCode == RESULT_OK) data?.data?.let {
+                recent.add(it, data.getStringExtra("name") ?: selectedName)
+                if (data.hasExtra("view_page")) recent.updateView(it, data.getIntExtra("view_page", 0),
+                    data.getStringExtra("view_mode") ?: "", data.getFloatExtra("view_zoom", 1f),
+                    data.getIntExtra("view_x", 0), data.getIntExtra("view_y", 0))
+            }
             val failedRecent = openingRecent && resultCode != RESULT_OK
             openingRecent = false
             if (requestCode == 2) showHome()
@@ -341,15 +389,18 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode != 1 || resultCode != RESULT_OK) return
+        releaseBrowser()
         documentUri = data?.data ?: return
         val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         if (data.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0 && flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-            try { contentResolver.takePersistableUriPermission(documentUri!!, flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            try { contentResolver.takePersistableUriPermission(documentUri!!, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             catch (_: SecurityException) { }
         }
         openingRecent = false
         incomingMimeType = null
         pageIndex = 0
+        hwpMode = "continuous"
+        hwpZoom = 1f
         waitingForFallback = false
         autoOpenOffice = true
         loadDocument()
@@ -357,6 +408,10 @@ class MainActivity : Activity() {
 
     private fun loadDocument() {
         val uri = documentUri ?: return
+        viewerControls.setDocumentNotice("")
+        hwpEquationWarning = false
+        hwpChartWarning = false
+        hwpSearchMessage = ""
         home.visibility = View.GONE
         container.visibility = View.VISIBLE
         pendingWebDocument = false
@@ -397,9 +452,12 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (generation == loadGeneration && !isDestroyed && !isFinishing) {
                         selectedName = name
+                        viewerControls.setTitle(name)
+                        val saved = if (openingRecent) recent.all().firstOrNull { it.uri == uri } else null
                         val extension = name.substringAfterLast('.', "").lowercase()
                         val isOffice = extension in listOf("docx", "xlsx", "pptx")
                         if (isOffice) {
+                            officeTrial.text = if (extension == "docx") "원본 페이지 보기" else "LibreOffice 시험"
                             officeTrial.visibility = View.VISIBLE
                         }
                         if (extension == "csv" && launchOffice) {
@@ -408,21 +466,30 @@ class MainActivity : Activity() {
                             documentUri = null
                             indicator.text = "CSV 보기"
                             @Suppress("DEPRECATION")
-                            startActivityForResult(Intent(this, CsvActivity::class.java).setData(uri).putExtra("name", name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
+                            startActivityForResult(Intent(this, CsvActivity::class.java).setData(uri).putExtra("name", name)
+                                .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_encoding", saved?.mode ?: "")
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
                         } else if (extension == "pdf" && launchOffice) {
                             releaseBrowser()
                             documentSource = null
                             documentUri = null
                             indicator.text = "PDF 보기"
                             @Suppress("DEPRECATION")
-                            startActivityForResult(Intent(this, PdfActivity::class.java).setData(uri).putExtra("name", name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
-                        } else if (isOffice && launchOffice) {
+                            startActivityForResult(Intent(this, PdfActivity::class.java).setData(uri).putExtra("name", name)
+                                .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_mode", saved?.mode?.toIntOrNull() ?: 0)
+                                .putExtra("restore_zoom", saved?.zoom ?: 1f).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
+                        } else if (isOffice && (launchOffice || extension == "docx")) {
                             releaseBrowser()
                             documentSource = null
                             indicator.text = "LibreOffice 시험 중"
                             resumeAfterOffice = true
                             @Suppress("DEPRECATION")
-                            startActivityForResult(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 3)
+                            startActivityForResult(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", name)
+                                .putExtra("restore_page", if (saved?.mode == "mobile-word") saved.x else saved?.page ?: pageIndex)
+                                .putExtra("restore_zoom", if (saved?.mode == "mobile-word") 1f else saved?.zoom ?: 1f)
+                                .putExtra("restore_x", if (saved?.mode == "mobile-word") 0 else saved?.x ?: 0)
+                                .putExtra("restore_y", if (saved?.mode == "mobile-word") 0 else saved?.y ?: 0)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 3)
                         } else {
                             if (!ready) {
                                 pendingWebDocument = true
@@ -464,7 +531,7 @@ class MainActivity : Activity() {
     private fun showRecentAccessError() {
         if (!openingRecent) return
         openingRecent = false
-        AlertDialog.Builder(this).setMessage("문서에 접근할 수 없습니다. 파일을 다시 선택해 주세요.")
+        AlertDialog.Builder(this).setMessage("문서를 열 수 없습니다. 파일을 다시 선택해 주세요.")
             .setNegativeButton("취소") { _, _ -> showHome() }
             .setPositiveButton("다시 선택") { _, _ -> showHome(); pickDocument() }.show()
     }
@@ -508,13 +575,22 @@ class MainActivity : Activity() {
                 val number = result.getInt("number")
                 val total = result.getInt("total")
                 val canNext = result.getBoolean("canNext")
+                hwpSearchMessage = " · 검색 $number/$total"
                 hwpNextSearch.visibility = if (canNext) View.VISIBLE else View.GONE
                 hwpNextSearch.text = "다음 $number/$total"
-                showPage(result.getInt("page"))
-                val message = if (total > 5000 && !canNext) "검색 결과가 많아 다음 결과 이동을 지원하지 않습니다." else "검색 결과 $number / $total"
+                val target = result.getInt("page")
+                browser?.evaluateJavascript("window.showHwpSearchResult($target)", null)
+                showHwpPosition()
+                val message = when {
+                    !result.optBoolean("highlighted") -> "검색 결과 위치를 강조할 수 없습니다."
+                    total > 5000 && !canNext -> "검색 결과가 많아 다음 결과 이동을 지원하지 않습니다."
+                    else -> "검색 결과 $number / $total"
+                }
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             } else {
+                hwpSearchMessage = ""
                 hwpNextSearch.visibility = View.GONE
+                showHwpPosition()
                 Toast.makeText(this, "검색 결과가 없습니다.", Toast.LENGTH_LONG).show()
             }
         } catch (error: org.json.JSONException) {
@@ -527,6 +603,8 @@ class MainActivity : Activity() {
         @JavascriptInterface fun onReady() = runOnUiThread {
             if (generation == browserGeneration && !isDestroyed && !isFinishing) {
                 ready = true
+                val fonts = org.json.JSONArray(UserFonts(this@MainActivity).all().map { it.json() })
+                browser?.evaluateJavascript("window.setUserFonts($fonts)", null)
                 if (waitingForFallback || resumeAfterOffice) showEngineChoice()
                 else if (pendingWebDocument) loadDocument()
             }
@@ -535,18 +613,56 @@ class MainActivity : Activity() {
             if (this.generation != browserGeneration || generation != loadGeneration || isDestroyed || isFinishing) return@runOnUiThread
             pageCount = count
             documentUri?.let { recent.add(it, selectedName) }
+            openingRecent = false
             val isHwp = selectedName.endsWith(".hwp", true) || selectedName.endsWith(".hwpx", true)
             hwpSearch.visibility = if (isHwp) View.VISIBLE else View.GONE
             hwpModes.visibility = if (isHwp) View.VISIBLE else View.GONE
+            if (isHwp) updateHwpNotice()
             list.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, (1..count).map { "$it" })
             val selected = pageIndex.coerceIn(0, count - 1)
             if (isHwp) browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(hwpMode)},$selected)", null)
             else showPage(selected)
+            if (isHwp && pendingHwpZoomRestore) {
+                val zoomToRestore = hwpZoom
+                browser?.post {
+                    if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
+                        pendingHwpZoomRestore = false
+                        browser?.zoomBy(zoomToRestore)
+                    }
+                }
+            }
         }
         @JavascriptInterface fun onPageShown(index: Int, generation: Int) = runOnUiThread {
             if (this.generation != browserGeneration || generation != loadGeneration || isDestroyed || isFinishing) return@runOnUiThread
             pageIndex = index
-            indicator.text = "${index + 1} / $pageCount"
+            showHwpPosition()
+        }
+        @JavascriptInterface fun onEquationFontWarning(generation: Int) = runOnUiThread {
+            if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
+                hwpEquationWarning = true
+                updateHwpNotice()
+            }
+        }
+        @JavascriptInterface fun onHwpChartWarning(generation: Int) = runOnUiThread {
+            if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
+                hwpChartWarning = true
+                updateHwpNotice()
+            }
+        }
+        @JavascriptInterface fun onHwpPasswordRequired(generation: Int, retry: Boolean) = runOnUiThread {
+            val source = documentSource
+            if (this.generation != browserGeneration || generation != loadGeneration || source == null || isDestroyed || isFinishing) return@runOnUiThread
+            val input = EditText(this@MainActivity).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+            AlertDialog.Builder(this@MainActivity).setTitle("한글 비밀번호")
+                .setMessage(if (retry) "비밀번호가 맞지 않거나 암호 데이터가 손상되었습니다." else "비밀번호를 입력해 주세요.")
+                .setView(input).setNegativeButton("취소") { _, _ -> showHome() }
+                .setOnCancelListener { showHome() }
+                .setPositiveButton("열기") { _, _ ->
+                    if (this.generation == browserGeneration && generation == loadGeneration && documentSource == source) {
+                        val url = "/document/${source.token}"
+                        browser?.evaluateJavascript("window.openDocument(${JSONObject.quote(url)},${JSONObject.quote(selectedName)},$generation,${JSONObject.quote(input.text.toString())})", null)
+                    }
+                }.show()
         }
         @JavascriptInterface fun onError(generation: Int) = runOnUiThread {
             if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
@@ -554,8 +670,23 @@ class MainActivity : Activity() {
                 hwpSearch.visibility = View.GONE
                 hwpNextSearch.visibility = View.GONE
                 hwpModes.visibility = View.GONE
+                showRecentAccessError()
             }
         }
+    }
+
+    private fun showHwpPosition() {
+        indicator.text = "${pageIndex + 1}/$pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
+        indicator.contentDescription = "${pageIndex + 1} / $pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
+        documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
+    }
+
+    private fun updateHwpNotice() {
+        val message = listOfNotNull(
+            if (hwpEquationWarning) "일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다." else null,
+            if (hwpChartWarning) "차트의 값이나 모양이 원본과 다를 수 있습니다." else null,
+        ).joinToString(" ").let { if (it.isEmpty()) it else "$it 원본 문서와 비교해 주세요." }
+        viewerControls.setDocumentNotice(message)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -566,6 +697,7 @@ class MainActivity : Activity() {
         outState.putBoolean("resumeAfterOffice", resumeAfterOffice)
         outState.putBoolean("waitingForFallback", waitingForFallback)
         outState.putString("hwpMode", hwpMode)
+        outState.putFloat("hwpZoom", hwpZoom)
         super.onSaveInstanceState(outState)
     }
 
@@ -579,10 +711,11 @@ class MainActivity : Activity() {
     }
 
     private fun showEngineChoice() {
-        indicator.text = "문서 보기 선택"
+        val word = selectedName.endsWith(".docx", true)
+        indicator.text = if (word) "원본 페이지 보기" else "문서 보기 선택"
         officeTrial.visibility = View.VISIBLE
-        legacyTrial.visibility = View.VISIBLE
-        if (ready) browser?.evaluateJavascript("window.showEngineChoice()", null)
+        legacyTrial.visibility = if (word) View.GONE else View.VISIBLE
+        if (ready && !word) browser?.evaluateJavascript("window.showEngineChoice()", null)
     }
 
     override fun onDestroy() {

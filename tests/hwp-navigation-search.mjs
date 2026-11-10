@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { mkdirSync } from 'node:fs';
+
+const adb = fileURLToPath(new URL('../.research/sdk/platform-tools/adb.exe', import.meta.url));
+const run = (...args) => execFileSync(adb, args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+const screen = () => {
+    run('shell', 'uiautomator', 'dump', '/sdcard/min-hwp-navigation.xml');
+    return run('shell', 'cat', '/sdcard/min-hwp-navigation.xml');
+};
+const waitFor = async pattern => {
+    for (let i = 0; i < 25; i++) {
+        const xml = screen();
+        if (pattern.test(xml)) return xml;
+        await delay(500);
+    }
+    throw new Error(`화면에 ${pattern} 표시되지 않음`);
+};
+const tap = (xml, attribute, value) => {
+    const node = xml.match(new RegExp(`<node[^>]*${attribute}="${value}"[^>]*>`))?.[0];
+    const m = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+    assert.ok(m, `${value} 항목을 찾을 수 없음`);
+    run('shell', 'input', 'tap', String((+m[1] + +m[3]) / 2), String((+m[2] + +m[4]) / 2));
+};
+assert.match(run('get-serialno').trim(), /^emulator-\d+$/);
+mkdirSync('.research/hwp-test', { recursive: true });
+const records = run('shell', 'content', 'query', '--uri', 'content://media/external/file', '--projection', '_id:_display_name');
+const id = records.split(/\r?\n/).find(line => line.includes('_display_name=real.hwp'))?.match(/_id=(\d+)/)?.[1];
+assert.ok(id, '공개 HWP 시험 파일 필요');
+run('shell', 'am', 'force-stop', 'org.minviewer.app');
+run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'application/x-hwp',
+    '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
+let xml = await waitFor(/1 \/ 35/);
+tap(xml, 'content-desc', '목록');
+xml = await waitFor(/text="3"/);
+tap(xml, 'text', '3');
+xml = await waitFor(/3 \/ 35/);
+tap(xml, 'content-desc', '검색');
+await waitFor(/한글 문서 검색/);
+run('shell', 'input', 'text', '2020');
+xml = await waitFor(/text="찾기"/);
+tap(xml, 'text', '찾기');
+xml = await waitFor(/6 \/ 35[^\"]*검색 1\/3/);
+await delay(1000);
+run('shell', 'screencap', '-p', '/sdcard/min-hwp-highlight.png');
+run('pull', '/sdcard/min-hwp-highlight.png', '.research/hwp-test/search-highlight.png');
+const checkHighlight = "import sys; sys.path.insert(0,'.research/py'); from PIL import Image; im=Image.open(sys.argv[1]).convert('RGB').crop((0,72,320,568)); n=sum(1 for r,g,b in im.getdata() if r>220 and 170<g<250 and b<190); sys.exit(0 if n>8 else 1)";
+execFileSync('python', ['-c', checkHighlight, '.research/hwp-test/search-highlight.png']);
+tap(xml, 'content-desc', '더보기');
+xml = await waitFor(/text="다음 검색 결과"/);
+tap(xml, 'text', '다음 검색 결과');
+xml = await waitFor(/검색 2\/3/);
+await delay(1000);
+run('shell', 'screencap', '-p', '/sdcard/min-hwp-highlight-next.png');
+run('pull', '/sdcard/min-hwp-highlight-next.png', '.research/hwp-test/search-highlight-next.png');
+execFileSync('python', ['-c', checkHighlight, '.research/hwp-test/search-highlight-next.png']);
+tap(xml, 'content-desc', '검색');
+await waitFor(/한글 문서 검색/);
+run('shell', 'input', 'text', '2021');
+xml = await waitFor(/text="찾기"/);
+tap(xml, 'text', '찾기');
+xml = await waitFor(/2 \/ 35[^\"]*검색 1\/5/);
+await delay(1000);
+run('shell', 'screencap', '-p', '/sdcard/min-hwp-highlight-cell.png');
+run('pull', '/sdcard/min-hwp-highlight-cell.png', '.research/hwp-test/search-highlight-cell.png');
+execFileSync('python', ['-c', checkHighlight, '.research/hwp-test/search-highlight-cell.png']);
+tap(xml, 'content-desc', '더보기');
+xml = await waitFor(/text="한쪽 보기"/);
+tap(xml, 'text', '한쪽 보기');
+xml = await waitFor(/2 \/ 35/);
+tap(xml, 'content-desc', '검색');
+await waitFor(/한글 문서 검색/);
+run('shell', 'input', 'text', '2021');
+xml = await waitFor(/text="찾기"/);
+tap(xml, 'text', '찾기');
+await waitFor(/2 \/ 35[^\"]*검색 1\/5/);
+await delay(1000);
+run('shell', 'screencap', '-p', '/sdcard/min-hwp-highlight-single.png');
+run('pull', '/sdcard/min-hwp-highlight-single.png', '.research/hwp-test/search-highlight-single.png');
+execFileSync('python', ['-c', checkHighlight, '.research/hwp-test/search-highlight-single.png']);
+console.log('한글 본문·표 검색 강조, 다음 결과, 한쪽 보기 및 페이지 목록 확인 완료');

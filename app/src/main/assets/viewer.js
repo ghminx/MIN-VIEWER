@@ -1,6 +1,7 @@
 import initRhwp, { HwpDocument } from './rhwp/rhwp.js';
 import { Odr } from './odr/index.js';
 import { loadPresentation, getSlides, renderSlideToSvg } from './pptx/pptx-viewer.js';
+import { substituteEquationGlyphs } from './equation-glyphs.mjs';
 
 const status = document.querySelector('#status');
 const page = document.querySelector('#page');
@@ -17,10 +18,23 @@ let sequence = 0;
 let activeGeneration = 0;
 let pendingFetch;
 let hwpMode = 'single';
+let hwpCurrentPage = 0;
 let hwpObserver;
 let hwpActiveObserver;
 let hwpSearchState;
+let hwpHighlights = [];
 let hwpLayoutGeneration = 0;
+let equationFontWarningShown = false;
+let chartWarningShown = false;
+let userFonts = [];
+
+window.setUserFonts = fonts => { userFonts = fonts; };
+
+function userFontStyles() {
+    return userFonts.flatMap(font => font.families.map(family =>
+        `@font-face{font-family:${JSON.stringify(family)};src:url("https://appassets.androidplatform.net/user-fonts/${font.id}");font-weight:${font.weight};font-style:${font.italic ? 'italic' : 'normal'}}`
+    )).join('');
+}
 
 window.resetDocument = () => {
     sequence++;
@@ -30,7 +44,11 @@ window.resetDocument = () => {
     hwpActiveObserver?.disconnect();
     hwpActiveObserver = undefined;
     hwpMode = 'single';
+    hwpCurrentPage = 0;
     hwpSearchState = undefined;
+    hwpHighlights = [];
+    equationFontWarningShown = false;
+    chartWarningShown = false;
     page.style.display = '';
     page.style.background = '';
     pendingFetch?.abort();
@@ -50,10 +68,37 @@ function hwpFrame(index) {
     const parsed = new DOMParser().parseFromString(output, 'image/svg+xml');
     if (parsed.querySelector('parsererror')) throw new Error('SVG 표시 실패');
     const svg = parsed.documentElement;
+    if (!chartWarningShown && svg.querySelector('.hwp-ooxml-chart')) {
+        chartWarningShown = true;
+        window.Android.onHwpChartWarning(activeGeneration);
+    }
+    const equationText = Array.from(svg.querySelectorAll('text[font-family="HyhwpEQ"]'));
+    const needsEquationWarning = equationText.some(element => /[\uE000-\uF8FF]/u.test(element.textContent));
+    const hasEquationFont = userFonts.some(font => font.families.some(family => family.toLowerCase() === 'hyhwpeq'));
+    for (const element of equationText) {
+        if (hasEquationFont) break;
+        if (element.children.length) continue;
+        const result = substituteEquationGlyphs(element.textContent);
+        if (!result.replaced) continue;
+        element.textContent = result.text;
+        element.setAttribute('font-family', 'serif');
+        if (result.italic) element.setAttribute('font-style', 'italic');
+    }
+    if (!equationFontWarningShown && needsEquationWarning) {
+        equationFontWarningShown = true;
+        window.Android.onEquationFontWarning(activeGeneration);
+    }
+    for (const rect of hwpHighlights.filter(item => item.pageIndex === index)) {
+        const mark = parsed.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        for (const key of ['x', 'y', 'width', 'height']) mark.setAttribute(key, String(rect[key]));
+        mark.setAttribute('fill', '#ffd200');
+        mark.setAttribute('fill-opacity', '0.45');
+        svg.appendChild(mark);
+    }
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', '');
     frame.title = `문서 ${index + 1}쪽`;
-    frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>body{margin:0}svg{display:block;width:100%;height:auto}</style>${new XMLSerializer().serializeToString(svg)}`;
+    frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src https://appassets.androidplatform.net"><style>${userFontStyles()}body{margin:0}svg{display:block;width:100%;height:auto}</style>${new XMLSerializer().serializeToString(svg)}`;
     return frame;
 }
 
@@ -149,14 +194,42 @@ function hwpMatchResult(match, number, total, canNext) {
         target = position.page;
     }
     if (!Number.isInteger(target) || target < 0 || target >= views.length) throw new Error('검색 결과의 페이지를 확인할 수 없습니다.');
-    return { found: true, page: target, number, total, canNext };
+    let rects = [];
+    try {
+        const end = match.charOffset + match.length;
+        const cell = match.cellContext;
+        const json = cell
+            ? documentHandle.getSelectionRectsInCell(match.sec, cell.parentPara, cell.ctrlIdx, cell.cellIdx, cell.cellPara, match.charOffset, cell.cellPara, end)
+            : documentHandle.getSelectionRects(match.sec, match.para, match.charOffset, match.para, end);
+        rects = JSON.parse(json).filter(rect => Number.isInteger(rect.pageIndex) && rect.pageIndex >= 0 && rect.pageIndex < views.length &&
+            ['x', 'y', 'width', 'height'].every(key => Number.isFinite(rect[key])) && rect.width > 0 && rect.height > 0);
+    } catch (_) { rects = []; }
+    if (rects.length) target = rects[0].pageIndex;
+    setHwpHighlights(rects);
+    return { found: true, page: target, number, total, canNext, highlighted: rects.length > 0 };
+}
+
+function setHwpHighlights(rects) {
+    const affected = new Set([...hwpHighlights, ...rects].map(rect => rect.pageIndex));
+    hwpHighlights = rects;
+    if (hwpMode === 'single') return;
+    for (const index of affected) {
+        const slot = page.children[index];
+        if (!slot?.firstChild) continue;
+        const frame = hwpFrame(index);
+        frame.style.height = '100%';
+        frame.style.position = 'absolute';
+        frame.style.inset = '0';
+        frame.style.pointerEvents = 'none';
+        slot.replaceChildren(frame);
+    }
 }
 
 window.searchHwp = query => {
     hwpSearchState = undefined;
     if (currentKind !== 'hwp' || !documentHandle || !query.trim()) return { found: false };
     const match = JSON.parse(documentHandle.searchText(query, 0, 0, 0, true, false, true));
-    if (!match.found) return { found: false };
+    if (!match.found) { setHwpHighlights([]); if (hwpMode === 'single') window.showPage(hwpCurrentPage); return { found: false }; }
     const total = match.totalMatchCount;
     if (Number.isInteger(total) && total > 1 && total <= 5000) {
         const matches = JSON.parse(documentHandle.searchAllText(query, false, true));
@@ -173,13 +246,33 @@ window.nextHwpResult = () => {
     return hwpMatchResult(hwpSearchState.matches[hwpSearchState.index], hwpSearchState.index + 1, hwpSearchState.matches.length, true);
 };
 
-window.openDocument = async (url, name, generation) => {
+window.showHwpSearchResult = index => {
+    window.showPage(index);
+    const rect = hwpHighlights.find(item => item.pageIndex === index);
+    if (!rect) return;
+    const generation = activeGeneration;
+    const layoutGeneration = hwpLayoutGeneration;
+    requestAnimationFrame(() => {
+        if (generation !== activeGeneration || layoutGeneration !== hwpLayoutGeneration || currentKind !== 'hwp' || hwpCurrentPage !== index) return;
+        const container = hwpMode === 'single' ? page : page.children[index];
+        if (!container) return;
+        const info = JSON.parse(documentHandle.getPageInfo(index));
+        const bounds = container.getBoundingClientRect();
+        if (info.height > 0 && bounds.height > 0) {
+            const offset = rect.y * bounds.height / info.height - window.innerHeight / 2;
+            const withinPage = Math.max(0, Math.min(offset, Math.max(0, bounds.height - window.innerHeight)));
+            window.scrollBy(0, bounds.top + withinPage);
+        }
+    });
+};
+
+window.openDocument = async (url, name, generation, password = null) => {
     const request = ++sequence;
+    const kind = /\.hwpx?$/i.test(name) ? 'hwp' : (/\.pptx$/i.test(name) ? 'pptx' : 'office');
     pendingFetch?.abort();
     const controller = new AbortController();
     pendingFetch = controller;
     try {
-        const kind = /\.hwpx?$/i.test(name) ? 'hwp' : (/\.pptx$/i.test(name) ? 'pptx' : 'office');
         const extension = name.split('.').pop().toLowerCase();
         if (kind === 'office' && !['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(extension)) {
             throw new Error('지원하지 않는 문서 형식입니다.');
@@ -194,7 +287,7 @@ window.openDocument = async (url, name, generation) => {
             rhwpReady ||= initRhwp({module_or_path: '/rhwp/rhwp_bg.wasm'});
             await rhwpReady;
             if (request !== sequence) return;
-            handle = new HwpDocument(bytes);
+            handle = password === null ? new HwpDocument(bytes) : HwpDocument.openWithPassword(bytes, password);
             try {
                 availableViews = Array.from({length: handle.pageCount()}, (_, index) => index);
             } catch (error) {
@@ -237,6 +330,10 @@ window.openDocument = async (url, name, generation) => {
         window.Android.onOpened(views.length, generation);
     } catch (error) {
         if (request !== sequence) return;
+        if (kind === 'hwp' && /비밀번호가 필요한 암호 문서|비밀번호가 일치하지 않/u.test(String(error))) {
+            window.Android.onHwpPasswordRequired(generation, password !== null);
+            return;
+        }
         status.textContent = `문서를 열 수 없습니다: ${error.message}`;
         window.Android.onError(generation);
     } finally {
@@ -246,6 +343,7 @@ window.openDocument = async (url, name, generation) => {
 
 window.showPage = index => {
     if (!documentHandle || index < 0 || index >= views.length) return;
+    if (currentKind === 'hwp') hwpCurrentPage = index;
     try {
         if (currentKind === 'hwp' && hwpMode !== 'single') {
             page.children[index]?.scrollIntoView({block: 'start'});
@@ -253,9 +351,13 @@ window.showPage = index => {
             return;
         }
         let element;
-        if (currentKind === 'hwp' || currentKind === 'pptx') {
-            const output = currentKind === 'hwp' ? documentHandle.renderPageSvg(index)
-                : renderSlideToSvg(documentHandle.presentation, documentHandle.slides[index]);
+        if (currentKind === 'hwp') {
+            const frame = hwpFrame(index);
+            const info = JSON.parse(documentHandle.getPageInfo(index));
+            if (info.width > 0 && info.height > 0) frame.style.height = `${Math.ceil(page.clientWidth * info.height / info.width)}px`;
+            element = frame;
+        } else if (currentKind === 'pptx') {
+            const output = renderSlideToSvg(documentHandle.presentation, documentHandle.slides[index]);
             const parsed = new DOMParser().parseFromString(output, 'image/svg+xml');
             if (parsed.querySelector('parsererror')) throw new Error('SVG 표시 실패');
             const svg = parsed.documentElement;
@@ -273,6 +375,7 @@ window.showPage = index => {
             frame.setAttribute('sandbox', '');
             frame.title = '문서';
             let html = documentHandle.render(views[index]).html;
+            html = html.replace('</head>', `<style>${userFontStyles()}</style></head>`);
             if (isSlide) {
                 const size = html.match(/class="odr-page-outer"\s+style="width:([\d.]+)in;height:([\d.]+)in/);
                 if (size) {

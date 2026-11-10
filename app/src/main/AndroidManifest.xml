@@ -1,7 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="MIN VIEWER PoC" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false" android:allowBackup="false">
+        <provider android:name=".ViewStateProvider" android:authorities="${applicationId}.viewstate" android:exported="false" />
         <activity android:name=".PdfActivity" android:exported="false" />
         <activity android:name=".CsvActivity" android:exported="false" />
+        <activity android:name=".FontsActivity" android:exported="false" />
         <activity android:name=".OfficeActivity" android:exported="false" android:process=":office" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
             <intent-filter>

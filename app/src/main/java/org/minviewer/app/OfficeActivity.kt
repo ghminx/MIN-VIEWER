@@ -2,6 +2,9 @@ package org.minviewer.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,8 +17,10 @@ import android.view.ViewGroup
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.widget.Button
+import android.widget.CheckedTextView
 import android.widget.ImageView
 import android.widget.EditText
+import android.text.InputType
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -30,10 +35,13 @@ import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class OfficeActivity : Activity() {
+    private data class ViewPosition(val page: Int, val zoom: Float, val x: Int, val y: Int)
     companion object {
         private val worker = Executors.newSingleThreadExecutor()
         private val activeFiles = mutableSetOf<File>()
@@ -42,12 +50,14 @@ class OfficeActivity : Activity() {
     }
     private lateinit var status: TextView
     private lateinit var image: ImageView
-    private lateinit var slideList: Button
+    private lateinit var slideList: TextView
     private lateinit var viewport: ScrollView
     private lateinit var contentRow: LinearLayout
     private var closeSlidePanel: (() -> Unit)? = null
     private var slidePanelSelection: Int? = null
     private var restoreSlidePanel = false
+    private var slidePanelAnimator: ValueAnimator? = null
+    private var slidePanelAnimating = false
     private var document: Document? = null
     private var temporaryFile: File? = null
     private var documentType = -1
@@ -68,38 +78,49 @@ class OfficeActivity : Activity() {
     private var wasScaling = false
     private var pageLimit = " · 시험용"
     private var searchMessage = ""
+    private var searchQuery = ""
+    @Volatile private var searchPending = false
+    @Volatile private var searchResultReceived = false
+    @Volatile private var searchFallbackAttempted = false
+    @Volatile private var searchFallbackScheduled = false
+    private var searchPart = 0
+    private var searchSheetsVisited = 0
+    private var searchPrevious: IntArray? = null
     private var highlightPage = -1
     private var highlight: IntArray? = null
     private var pages = emptyList<IntArray>()
+    private var sheetNames = emptyList<String>()
     private var tilePixels: ByteBuffer? = null
     @Volatile private var closed = false
+    private var passwordLatch: CountDownLatch? = null
+    private var passwordAttempts = 0
+    private var openedSuccessfully = false
+    private var recentRegistered = false
+    private var lastSavedView: ViewPosition? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemePreferences.apply(this)
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         synchronized(OfficeActivity::class.java) { activeActivities++ }
-        pageIndex = savedInstanceState?.getInt("page") ?: 0
-        viewportX = savedInstanceState?.getInt("viewportX") ?: 0
-        viewportY = savedInstanceState?.getInt("viewportY") ?: 0
-        zoom = savedInstanceState?.getFloat("zoom") ?: 1f
+        pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
+        viewportX = savedInstanceState?.getInt("viewportX") ?: intent.getIntExtra("restore_x", 0)
+        viewportY = savedInstanceState?.getInt("viewportY") ?: intent.getIntExtra("restore_y", 0)
+        zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         restoreSlidePanel = savedInstanceState?.getBoolean("slidePanel") ?: false
-        val toolbar = LinearLayout(this)
-        listOf(
-            "뒤로" to { finish() },
-            "이전" to { showPage(pageIndex - 1) },
-            "다음" to { showPage(pageIndex + 1) },
-        ).forEach { (label, action) ->
-            toolbar.addView(Button(this).apply { text = label; setOnClickListener { action() } }, toolLayout())
-        }
-        status = TextView(this).apply { text = "LibreOffice 시험 문서를 불러오는 중입니다." }
-        val zoomTools = LinearLayout(this)
-        listOf("축소" to { setZoom(zoom / 1.5f) }, "확대" to { setZoom(zoom * 1.5f) }).forEach { (label, action) ->
-            zoomTools.addView(Button(this).apply { text = label; setOnClickListener { action() } }, toolLayout())
-        }
-        zoomTools.addView(Button(this).apply { text = "검색"; setOnClickListener { searchDocument() } }, toolLayout())
-        slideList = Button(this).apply { text = "목록"; visibility = View.GONE; setOnClickListener { showSlideList() } }
-        zoomTools.addView(slideList, toolLayout())
+        val controls = ViewerControls(this, intent.getStringExtra("name") ?: "문서", { finish() }, { searchDocument() },
+            {
+                when (documentType) {
+                    Document.DOCTYPE_SPREADSHEET -> showSheetList()
+                    Document.DOCTYPE_TEXT -> showWordPageList()
+                    else -> showSlideList()
+                }
+            },
+            { showPage(pageIndex - 1) }, { showPage(pageIndex + 1) },
+            { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) }, listOf("다음 검색 결과" to { searchNext() }))
+        status = controls.status
+        slideList = controls.listButton.apply { visibility = View.GONE }
         val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 wasScaling = true
@@ -140,7 +161,7 @@ class OfficeActivity : Activity() {
                 val changed = width != viewportWidth || height != viewportHeight
                 viewportWidth = width
                 viewportHeight = height
-                if (changed && pageCount > 0 && zoom > 1f && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
+                if (changed && !slidePanelAnimating && pageCount > 0 && zoom > 1f && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }
         contentRow = LinearLayout(this).apply {
@@ -154,10 +175,9 @@ class OfficeActivity : Activity() {
                 view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
                 insets
             }
-            addView(toolbar)
-            addView(zoomTools)
-            addView(status)
+            addView(controls)
             addView(contentRow, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(controls.takeBottom())
         })
         val uri = intent.data
         val extension = intent.getStringExtra("name")?.substringAfterLast('.', "")?.lowercase()
@@ -177,8 +197,10 @@ class OfficeActivity : Activity() {
                 if (closed) return@execute
                 val signature = ByteArray(4)
                 val count = file.inputStream().use { it.read(signature) }
-                if (count != 4 || !signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x03, 0x04))) {
-                    throw IOException("파일 내용이 형식과 다르거나 암호화되어 있습니다.")
+                val zip = byteArrayOf(0x50, 0x4b, 0x03, 0x04)
+                val compound = byteArrayOf(0xd0.toByte(), 0xcf.toByte(), 0x11, 0xe0.toByte())
+                if (count != 4 || (!signature.contentEquals(zip) && !signature.contentEquals(compound))) {
+                    throw IOException("파일 내용이 형식과 다릅니다.")
                 }
                 if (!engineCachePrepared) {
                     val engineCache = File(cacheDir, "lok-engine")
@@ -186,9 +208,14 @@ class OfficeActivity : Activity() {
                     if (!engineCache.mkdirs()) throw IOException("엔진 캐시를 만들 수 없습니다.")
                     engineCachePrepared = true
                 }
+                configureUserFonts()
                 LibreOfficeKit.init(this)
                 val handle = LibreOfficeKit.getLibreOfficeKitHandle() ?: throw IOException("엔진을 시작할 수 없습니다.")
                 val office = Office(handle)
+                office.setMessageCallback { type, payload ->
+                    if (type == Document.CALLBACK_DOCUMENT_PASSWORD) requestPassword(office, payload)
+                }
+                office.setOptionalFeatures(Document.LOK_FEATURE_DOCUMENT_PASSWORD)
                 val opened = office.documentLoad(file.absolutePath) ?: throw IOException("문서를 열 수 없습니다.")
                 document = opened
                 opened.initializeForRendering()
@@ -208,8 +235,14 @@ class OfficeActivity : Activity() {
                 } else emptyList()
                 pageCount = if (pages.isNotEmpty()) pages.size else opened.parts
                 if (pageCount <= 0) throw IOException("표시할 페이지가 없습니다.")
+                if (documentType == Document.DOCTYPE_SPREADSHEET) {
+                    sheetNames = (0 until pageCount).map { opened.getPartName(it) }
+                }
                 runOnUiThread {
-                    if (!closed) setResult(RESULT_OK, Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
+                    if (!closed) {
+                        openedSuccessfully = true
+                        setResult(RESULT_OK, Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
+                    }
                 }
                 if (!closed && documentType == Document.DOCTYPE_PRESENTATION) runOnUiThread {
                     if (!closed) {
@@ -220,12 +253,87 @@ class OfficeActivity : Activity() {
                         }
                     }
                 }
+                if (!closed && documentType == Document.DOCTYPE_SPREADSHEET) runOnUiThread {
+                    if (!closed) {
+                        slideList.text = "시트"
+                        slideList.contentDescription = "시트 목록"
+                        slideList.visibility = View.VISIBLE
+                    }
+                }
+                if (!closed && documentType == Document.DOCTYPE_TEXT && pages.isNotEmpty()) runOnUiThread {
+                    if (!closed) {
+                        slideList.text = "페이지"
+                        slideList.contentDescription = "페이지 목록"
+                        slideList.visibility = View.VISIBLE
+                    }
+                }
                 drawPage(pageIndex.coerceIn(0, pageCount - 1), viewportX, viewportY, zoom, renderGeneration.incrementAndGet())
             } catch (error: Exception) {
                 closeDocument()
                 if (!closed) runOnUiThread { if (!closed) status.text = "LibreOffice 오류: ${error.message}" }
             }
         }
+    }
+
+    private fun configureUserFonts() {
+        val engineFonts = File(applicationInfo.dataDir, "user/fonts")
+        engineFonts.listFiles()?.filter { it.name.matches(Regex("min-user-[0-9a-f]{64}\\.ttf")) }?.forEach {
+            if (!it.delete()) throw IOException("이전 사용자 글꼴 연결을 정리할 수 없습니다.")
+        }
+        val stored = UserFonts(this)
+        stored.all().forEach { entry ->
+            android.system.Os.symlink(stored.file(entry.id).absolutePath, File(engineFonts, "min-user-${entry.id}.ttf").absolutePath)
+        }
+    }
+
+    private fun requestPassword(office: Office, url: String) {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<String?>(null)
+        val retry = synchronized(this) {
+            if (closed) return
+            passwordLatch = latch
+            passwordAttempts++ > 0
+        }
+        runOnUiThread {
+            if (closed) {
+                latch.countDown()
+            } else {
+                val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+                AlertDialog.Builder(this).setTitle("문서 비밀번호")
+                    .setMessage(if (retry) "비밀번호가 맞지 않습니다. 다시 입력해 주세요." else "비밀번호를 입력해 주세요.")
+                    .setView(input).setCancelable(false)
+                    .setNegativeButton("취소") { _, _ -> latch.countDown(); finish() }
+                    .setPositiveButton("열기") { _, _ -> result.set(input.text.toString()); latch.countDown() }
+                    .show()
+            }
+        }
+        try {
+            latch.await()
+            office.setDocumentPassword(url, result.get())
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            office.setDocumentPassword(url, null)
+        } finally {
+            synchronized(this) { if (passwordLatch === latch) passwordLatch = null }
+        }
+    }
+
+    private fun saveResult() {
+        if (openedSuccessfully) {
+            setResult(RESULT_OK, Intent().setData(intent.data).putExtra("name", intent.getStringExtra("name"))
+                .putExtra("view_page", pageIndex).putExtra("view_mode", "").putExtra("view_zoom", zoom)
+                .putExtra("view_x", viewportX).putExtra("view_y", viewportY))
+        }
+    }
+
+    override fun finish() {
+        saveResult()
+        super.finish()
+    }
+
+    override fun onStop() {
+        saveResult()
+        super.onStop()
     }
 
     private fun showPage(index: Int, x: Int = 0, y: Int = 0) {
@@ -324,12 +432,31 @@ class OfficeActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = "LibreOffice ${pageIndex + 1} / $pageCount$pageLimit · ${(zoom * 100).toInt()}%$searchMessage"
+        status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
+        status.contentDescription = "LibreOffice ${pageIndex + 1} / $pageCount$pageLimit · ${(zoom * 100).toInt()}%$searchMessage"
+        val uri = intent.data ?: return
+        if (!openedSuccessfully) return
+        val currentView = ViewPosition(pageIndex, zoom, viewportX, viewportY)
+        if (recentRegistered && currentView == lastSavedView) return
+        val state = Bundle().apply {
+            putString("uri", uri.toString())
+            putString("name", intent.getStringExtra("name") ?: "document")
+            putBoolean("opened", !recentRegistered)
+            putInt("page", pageIndex)
+            putString("mode", "")
+            putFloat("zoom", zoom)
+            putInt("x", viewportX)
+            putInt("y", viewportY)
+        }
+        contentResolver.call(android.net.Uri.parse("content://$packageName.viewstate"), "save", null, state)
+        recentRegistered = true
+        lastSavedView = currentView
     }
 
     private fun showSlideList() {
-        if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0) return
+        if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0 || slidePanelAnimating) return
         closeSlidePanel?.let { it(); return }
+        val wide = resources.configuration.screenWidthDp >= 840
         val active = AtomicBoolean(true)
         val cache = object : LruCache<Int, Bitmap>(4 * 1024 * 1024) {
             override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount
@@ -347,7 +474,7 @@ class OfficeActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     contentDescription = "미리보기 ${position + 1}번 슬라이드"
                     removeAllViews()
-                    layoutParams = AbsListView.LayoutParams(-1, (116 * resources.displayMetrics.density).toInt())
+                    layoutParams = AbsListView.LayoutParams(-1, ((if (wide) 160 else 116) * resources.displayMetrics.density).toInt())
                 }
                 item.addView(ImageView(this@OfficeActivity).apply {
                     setBackgroundColor(Color.LTGRAY)
@@ -372,7 +499,11 @@ class OfficeActivity : Activity() {
                                 if (width <= 0 || height <= 0) throw IOException("슬라이드 크기를 확인할 수 없습니다.")
                                 val pixelWidth = minOf(240L, maxOf(1L, 240L * width / height)).toInt()
                                 val pixelHeight = maxOf(1L, pixelWidth.toLong() * height / width).toInt()
-                                val pixels = ByteBuffer.allocateDirect(pixelWidth * pixelHeight * 4)
+                                val byteCount = pixelWidth * pixelHeight * 4
+                                val pixels = tilePixels?.takeIf { it.capacity() >= byteCount }
+                                    ?: ByteBuffer.allocateDirect(byteCount).also { tilePixels = it }
+                                pixels.clear()
+                                pixels.limit(byteCount)
                                 opened.paintTile(pixels, pixelWidth, pixelHeight, 0, 0, width, height)
                                 val bitmap = Bitmap.createBitmap(pixelWidth, pixelHeight, Bitmap.Config.ARGB_8888)
                                 pixels.rewind()
@@ -401,7 +532,7 @@ class OfficeActivity : Activity() {
         }
         grid = GridView(this).apply {
             contentDescription = "슬라이드 목록"
-            numColumns = GridView.AUTO_FIT
+            numColumns = if (wide) 1 else GridView.AUTO_FIT
             columnWidth = (96 * resources.displayMetrics.density).toInt()
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
             this.adapter = adapter
@@ -409,20 +540,30 @@ class OfficeActivity : Activity() {
         val closeList = {
             val target = if (grid.parent === contentRow) slidePanelSelection ?: pageIndex else selected
             active.set(false)
-            cache.evictAll()
-            if (grid.parent === contentRow) contentRow.removeView(grid)
-            closeSlidePanel = null
-            slidePanelSelection = null
-            if (!closed) {
-                if (target == pageIndex) showPage(target, viewportX, viewportY) else showPage(target)
+            val finishClose = {
+                cache.evictAll()
+                if (grid.parent === contentRow) contentRow.removeView(grid)
+                closeSlidePanel = null
+                slidePanelSelection = null
+                if (!closed) {
+                    if (target == pageIndex) showPage(target, viewportX, viewportY) else showPage(target)
+                }
+            }
+            if (!closed && grid.parent === contentRow) {
+                animateSlidePanel(grid, grid.width, 0, finishClose)
+            } else {
+                finishClose()
             }
         }
-        if (resources.configuration.screenWidthDp >= 840) {
+        if (wide) {
             closeSlidePanel = closeList
             slidePanelSelection = pageIndex
-            contentRow.addView(grid, 0, LinearLayout.LayoutParams((320 * resources.displayMetrics.density).toInt(), -1))
+            val width = (240 * resources.displayMetrics.density).toInt()
+            contentRow.addView(grid, 0, LinearLayout.LayoutParams(0, -1))
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; showPage(position) }
-            viewport.post { if (!closed && active.get()) showPage(pageIndex, viewportX, viewportY) }
+            animateSlidePanel(grid, 0, width) {
+                if (!closed && active.get()) showPage(pageIndex, viewportX, viewportY)
+            }
         } else {
             val dialog = AlertDialog.Builder(this).setTitle("슬라이드 목록").setView(grid).setNegativeButton("닫기", null).create()
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; dialog.dismiss() }
@@ -431,43 +572,167 @@ class OfficeActivity : Activity() {
         }
     }
 
+    private fun animateSlidePanel(grid: GridView, from: Int, to: Int, finished: () -> Unit) {
+        slidePanelAnimating = true
+        slidePanelAnimator = ValueAnimator.ofInt(from, to).apply {
+            duration = 220
+            addUpdateListener { animator ->
+                grid.layoutParams = grid.layoutParams.apply { width = animator.animatedValue as Int }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    slidePanelAnimating = false
+                    slidePanelAnimator = null
+                    finished()
+                }
+            })
+            start()
+        }
+    }
+
+    private fun showSheetList() {
+        if (sheetNames.isEmpty()) return
+        val dialog = AlertDialog.Builder(this).setTitle("시트 목록")
+            .setSingleChoiceItems(sheetNames.toTypedArray(), pageIndex) { dialog, position ->
+                dialog.dismiss()
+                if (position != pageIndex) showPage(position)
+            }
+            .setNegativeButton("닫기", null)
+            .create()
+        dialog.show()
+    }
+
+    private fun showWordPageList() {
+        if (pages.isEmpty()) return
+        val adapter = object : BaseAdapter() {
+            override fun getCount() = pageCount
+            override fun getItem(position: Int) = position
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
+                val item = recycled as? CheckedTextView
+                    ?: layoutInflater.inflate(android.R.layout.simple_list_item_single_choice, parent, false) as CheckedTextView
+                item.text = "${position + 1}쪽"
+                return item
+            }
+        }
+        AlertDialog.Builder(this).setTitle("페이지 목록")
+            .setSingleChoiceItems(adapter, pageIndex) { dialog, position ->
+                dialog.dismiss()
+                if (position != pageIndex) showPage(position)
+            }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
     private fun searchDocument() {
-        if (pageCount == 0) return
-        val input = EditText(this).apply { setSingleLine(); hint = "검색어" }
-        AlertDialog.Builder(this).setTitle("문서 검색").setView(input).setNegativeButton("취소", null)
+        if (pageCount == 0 || searchPending) return
+        val input = EditText(this).apply { setSingleLine(); hint = "검색어"; setText(searchQuery) }
+        val title = if (documentType == Document.DOCTYPE_SPREADSHEET) "전체 시트 검색" else "문서 검색"
+        AlertDialog.Builder(this).setTitle(title).setView(input).setNegativeButton("취소", null)
             .setPositiveButton("찾기") { _, _ ->
                 val query = input.text.toString()
                 if (query.isNotBlank()) {
-                    searchMessage = " · 검색 중"
-                    updateStatus()
-                    worker.execute {
-                        try {
-                            fun property(type: String, value: String) = JSONObject().put("type", type).put("value", value)
-                            val args = JSONObject()
-                                .put("SearchItem.SearchString", property("string", query))
-                                .put("SearchItem.Backward", property("boolean", "false"))
-                                .put("SearchItem.SearchStartPointX", property("long", "0"))
-                                .put("SearchItem.SearchStartPointY", property("long", "0"))
-                                .put("SearchItem.Command", property("long", "0"))
-                            val active = document ?: throw IOException("문서가 닫혔습니다.")
-                            if (!closed) {
-                                if (documentType == Document.DOCTYPE_PRESENTATION) active.setPart(pageIndex)
-                                active.postUnoCommand(".uno:ExecuteSearch", args.toString(), false)
-                            }
-                        } catch (error: Exception) {
-                            if (!closed) runOnUiThread { if (!closed) status.text = "검색 오류: ${error.message}" }
-                        }
-                    }
+                    searchQuery = query
+                    highlight = null
+                    performSearch(0, 0, findAll = documentType == Document.DOCTYPE_SPREADSHEET)
                 }
             }.show()
     }
 
+    private fun searchNext() {
+        val previous = highlight
+        if (searchQuery.isEmpty() || previous == null) {
+            android.widget.Toast.makeText(this, "먼저 문서를 검색해 주세요", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (documentType == Document.DOCTYPE_SPREADSHEET && highlightPage != pageIndex) {
+            highlight = null
+            performSearch(0, 0, findAll = true)
+            return
+        }
+        performSearch(previous[0] + previous[2], previous[1] + previous[3] / 2)
+    }
+
+    private fun performSearch(startX: Int, startY: Int, findAll: Boolean = false, nextPart: Int? = null) {
+        if (searchPending && !findAll && nextPart == null) return
+        if ((!findAll || !searchPending) && nextPart == null) {
+            searchPending = true
+            searchFallbackAttempted = false
+            searchFallbackScheduled = false
+            searchPart = if (highlight != null) highlightPage else pageIndex
+            searchSheetsVisited = 1
+            searchPrevious = highlight?.copyOf()
+        } else if (nextPart != null) {
+            searchPart = nextPart
+            searchPrevious = null
+            searchFallbackAttempted = false
+            searchFallbackScheduled = false
+        }
+        searchMessage = " · 검색 중"
+        updateStatus()
+        val part = searchPart
+        val query = searchQuery
+        worker.execute {
+            try {
+                fun property(type: String, value: String) = JSONObject().put("type", type).put("value", value)
+                val args = JSONObject()
+                    .put("SearchItem.SearchString", property("string", query))
+                    .put("SearchItem.Backward", property("boolean", "false"))
+                    .put("SearchItem.SearchStartPointX", property("long", startX.toString()))
+                    .put("SearchItem.SearchStartPointY", property("long", startY.toString()))
+                    .put("SearchItem.Command", property("long", if (findAll) "1" else "0"))
+                val active = document ?: throw IOException("문서가 닫혔습니다.")
+                if (!closed) {
+                    if (findAll) searchFallbackScheduled = false
+                    searchResultReceived = false
+                    if (documentType != Document.DOCTYPE_TEXT) active.setPart(part)
+                    active.postUnoCommand(".uno:ExecuteSearch", args.toString(), true)
+                }
+            } catch (error: Exception) {
+                if (!closed) runOnUiThread {
+                    if (!closed) { searchPending = false; status.text = "검색 오류: ${error.message}" }
+                }
+            }
+        }
+    }
+
+    private fun searchNextSheet(): Boolean {
+        if (documentType != Document.DOCTYPE_SPREADSHEET || searchSheetsVisited >= pageCount) return false
+        searchSheetsVisited++
+        val next = (searchPart + 1) % pageCount
+        if (!closed) runOnUiThread { if (!closed) performSearch(0, 0, findAll = true, nextPart = next) }
+        return true
+    }
+
     private fun handleSearchResult(type: Int, payload: String) {
         if (closed) return
-        if (type == Document.CALLBACK_SEARCH_NOT_FOUND) {
+        if (type == Document.CALLBACK_SEARCH_RESULT_SELECTION) searchResultReceived = true
+        val commandFailed = if (type == Document.CALLBACK_UNO_COMMAND_RESULT) {
+            try {
+                val result = JSONObject(payload)
+                result.optString("commandName") == ".uno:ExecuteSearch" && result.has("success") && !result.getBoolean("success")
+            } catch (_: org.json.JSONException) { false }
+        } else false
+        if (type == Document.CALLBACK_SEARCH_NOT_FOUND || commandFailed) {
             worker.execute {
+                if (!searchPending || (commandFailed && searchResultReceived)) return@execute
+                if (searchFallbackScheduled) return@execute
+                if (documentType == Document.DOCTYPE_SPREADSHEET && !searchFallbackAttempted) {
+                    searchFallbackAttempted = true
+                    searchFallbackScheduled = true
+                    if (!closed) runOnUiThread { if (!closed) performSearch(0, 0, true) }
+                    return@execute
+                }
+                if (searchNextSheet()) return@execute
                 highlight = null
-                if (!closed) runOnUiThread { if (!closed) searchMessage = " · 검색 결과 없음" }
+                if (!closed) runOnUiThread {
+                    if (!closed) {
+                        searchMessage = if (commandFailed) " · 검색 결과 없음 또는 검색 실패" else " · 검색 결과 없음"
+                        searchPending = false
+                        val message = if (commandFailed) "검색 결과가 없거나 검색을 완료하지 못했습니다" else "검색 결과가 없습니다"
+                        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
                 try {
                     if (!closed) drawPage(pageIndex, viewportX, viewportY, zoom, renderGeneration.incrementAndGet())
                 } catch (error: Exception) {
@@ -481,16 +746,27 @@ class OfficeActivity : Activity() {
                     val coords = first.getString("rectangles").substringBefore(';').split(',').map { it.trim().toInt() }.toIntArray()
                     if (coords.size != 4) throw IOException("검색 위치를 읽을 수 없습니다.")
                     val part = first.getInt("part")
+                    val previous = searchPrevious
+                    if (documentType == Document.DOCTYPE_SPREADSHEET && part == searchPart && previous != null &&
+                        (coords[1] < previous[1] || (coords[1] == previous[1] && coords[0] <= previous[0]))) {
+                        if (searchNextSheet()) return@execute
+                    }
                     val target = if (documentType == Document.DOCTYPE_TEXT && pages.isNotEmpty()) {
                         pages.indexOfFirst { coords[1] >= it[1] && coords[1].toLong() < it[1].toLong() + it[3] }.coerceAtLeast(0)
                     } else part
                     if (target !in 0 until pageCount) throw IOException("검색 페이지를 확인할 수 없습니다.")
                     highlightPage = target
                     highlight = coords
-                    if (!closed) runOnUiThread { if (!closed) searchMessage = " · 검색 결과" }
+                    if (!closed) runOnUiThread {
+                        if (!closed) {
+                            searchMessage = " · 검색 결과"
+                            searchPending = false
+                            android.widget.Toast.makeText(this, "검색 결과를 표시합니다", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                     drawPage(target, coords[0], coords[1], zoom, renderGeneration.incrementAndGet())
                 } catch (error: Exception) {
-                    if (!closed) runOnUiThread { if (!closed) status.text = "검색 오류: ${error.message}" }
+                    if (!closed) runOnUiThread { if (!closed) { searchPending = false; status.text = "검색 오류: ${error.message}" } }
                 }
             }
         }
@@ -508,7 +784,9 @@ class OfficeActivity : Activity() {
 
     override fun onDestroy() {
         closed = true
+        synchronized(this) { passwordLatch?.countDown() }
         renderGeneration.incrementAndGet()
+        slidePanelAnimator?.cancel()
         closeSlidePanel?.invoke()
         val finishing = isFinishing
         synchronized(OfficeActivity::class.java) { activeActivities-- }

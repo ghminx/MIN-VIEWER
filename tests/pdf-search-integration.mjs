@@ -76,7 +76,9 @@ run('shell', 'screencap', '-p', '/sdcard/min-pdf-search.png');
 run('pull', '/sdcard/min-pdf-search.png', '.research/pdf-test/search-result.png');
 const checkHighlight = "import sys; sys.path.insert(0,'.research/py'); from PIL import Image; im=Image.open(sys.argv[1]).convert('RGB'); n=sum(1 for r,g,b in im.getdata() if r>230 and 190<g<250 and b<220); sys.exit(0 if n>5 else 1)";
 execFileSync('python', ['-c', checkHighlight, '.research/pdf-test/search-result.png']);
-tapButton(xml, '다음 찾기');
+tapButton(xml, '⋮');
+xml = screen();
+tapButton(xml, '다음 검색 결과');
 for (let i = 0; i < 15; i++) {
     await delay(700);
     xml = screen();

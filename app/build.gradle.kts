@@ -27,8 +27,11 @@ android {
 
 val checkEngineAssets by tasks.registering {
     doLast {
-        check(rootProject.file(".research/engine-poc/node_modules/@rhwp/core/rhwp_bg.wasm").exists()) {
-            "npm 엔진 패키지 설치 필요: docs/ANDROID_POC.md 참고"
+        check(rootProject.file(".research/rhwp-patched/rhwp_bg.wasm").exists() && rootProject.file(".research/rhwp-patched/rhwp.js").exists()) {
+            "수정된 한글 엔진 빌드 필요: docs/ANDROID_POC.md 참고"
+        }
+        check(rootProject.file(".research/engine-poc/node_modules/@rhwp/core/notices").isDirectory) {
+            "한글 엔진 의존성 고지 설치 필요: docs/ANDROID_POC.md 참고"
         }
         check(rootProject.file(".research/engine-poc/node_modules/@opendocument/odr-core/odr-core.wasm").exists()) {
             "npm 엔진 패키지 설치 필요: docs/ANDROID_POC.md 참고"
@@ -43,8 +46,12 @@ val checkEngineAssets by tasks.registering {
 }
 val prepareEngineAssets by tasks.registering(Copy::class) {
     dependsOn(checkEngineAssets)
+    from(rootProject.file(".research/rhwp-patched")) {
+        include("rhwp.js", "rhwp_bg.wasm", "LICENSE")
+        into("rhwp")
+    }
     from(rootProject.file(".research/engine-poc/node_modules/@rhwp/core")) {
-        include("rhwp.js", "rhwp_bg.wasm", "LICENSE", "notices/**")
+        include("notices/**")
         into("rhwp")
     }
     from(rootProject.file(".research/engine-poc/node_modules/@opendocument/odr-core")) {

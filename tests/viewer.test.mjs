@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source = (await readFile(new URL('../app/src/main/assets/viewer.js', import.meta.url), 'utf8'))
     .replace(/^import .*;\n/gm, '');
 
-function setup({ failListViews = false, failPageCount = false, pendingFetch = false, pendingBody = false } = {}) {
+function setup({ failListViews = false, failPageCount = false, pendingFetch = false, pendingBody = false, failSelectionRects = false } = {}) {
     let resolveRhwp;
     const rhwpReady = new Promise(resolve => { resolveRhwp = resolve; });
     const events = [];
@@ -70,6 +70,11 @@ function setup({ failListViews = false, failPageCount = false, pendingFetch = fa
             searchAllText() { return JSON.stringify([{ sec: 0, para: 3, charOffset: 0, length: 3 }, { sec: 0, para: 4, charOffset: 2, length: 3 }]); }
             getPageOfPosition(sec, para) { return JSON.stringify({ ok: true, page: para === 4 ? 1 : 0 }); }
             getCursorRectInCell() { return JSON.stringify({ pageIndex: 1 }); }
+            getSelectionRects(sec, para) {
+                if (failSelectionRects) throw new Error('선택 영역 없음');
+                return JSON.stringify([{ pageIndex: para === 4 ? 1 : 0, x: 10, y: 20, width: 30, height: 10 }]);
+            }
+            getSelectionRectsInCell() { return JSON.stringify([{ pageIndex: 1, x: 5, y: 8, width: 20, height: 10 }]); }
         },
         Odr: { load: async () => odr },
     });
@@ -81,11 +86,25 @@ test('한글 검색은 첫 결과의 페이지를 반환하고 없으면 알림'
     const { window, resolveRhwp } = setup();
     resolveRhwp();
     await window.openDocument('/valid', 'sample.hwp', 1);
-    assert.equal(window.searchHwp('찾을말').page, 0);
+    const first = window.searchHwp('찾을말');
+    assert.equal(first.page, 0);
+    assert.equal(first.highlighted, true);
     assert.equal(window.nextHwpResult().page, 1);
     assert.equal(window.nextHwpResult().page, 0);
-    assert.equal(window.searchHwp('셀').page, 1);
+    const cell = window.searchHwp('셀');
+    assert.equal(cell.page, 1);
+    assert.equal(cell.highlighted, true);
     assert.equal(window.searchHwp('없는말').found, false);
+});
+
+test('강조 좌표를 구하지 못해도 검색된 페이지는 반환', async () => {
+    const { window, resolveRhwp } = setup({ failSelectionRects: true });
+    resolveRhwp();
+    await window.openDocument('/valid', 'sample.hwp', 1);
+    const result = window.searchHwp('찾을말');
+    assert.equal(result.found, true);
+    assert.equal(result.page, 0);
+    assert.equal(result.highlighted, false);
 });
 
 test('늦게 끝난 이전 문서가 새 문서를 덮어쓰지 않음', async () => {

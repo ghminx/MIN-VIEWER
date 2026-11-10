@@ -1,0 +1,102 @@
+diff --git a/crates/rhwp-ooxml-chart/src/renderer.rs b/crates/rhwp-ooxml-chart/src/renderer.rs
+index f34ac5a44..12fb42f83 100644
+--- a/crates/rhwp-ooxml-chart/src/renderer.rs
++++ b/crates/rhwp-ooxml-chart/src/renderer.rs
+@@ -289,6 +289,13 @@ fn format_value_axis_num(v: f64, format_code: Option<&str>) -> String {
+     }
+ }
+ 
++fn format_clustered_data_label(v: f64, format_code: Option<&str>) -> Option<String> {
++    if !v.is_finite() || format_code.is_some_and(|code| !code.is_empty() && !code.eq_ignore_ascii_case("general")) {
++        return None;
++    }
++    format!("{:.14e}", v).parse::<f64>().ok().map(|value| value.to_string())
++}
++
+ /// 축 눈금의 측정과 표시가 같은 문자열을 사용한다.
+ fn format_grid_value(v: f64, format_code: Option<&str>, percent: bool, decimal: bool) -> String {
+     if percent {
+@@ -893,6 +900,15 @@ fn render_bars(
+                         "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\" {}/>\n",
+                         bx, cy.min(cy + bar_w * 0.95), bw, (bar_w * 0.95).abs(), color, line_attr(ser.shape_line, "")
+                     ));
++                    if let Some(label) = ser.show_values.then(|| format_clustered_data_label(v, ser.format_code.as_deref())).flatten() {
++                        let font = data_label_font_px(chart, ser);
++                        let (label_x, anchor) = if v < 0.0 { (bx - 2.0, "end") } else { (bx + bw + 2.0, "start") };
++                        data_labels.push_str(&format!(
++                            "<text class=\"hwp-chart-data-label\" x=\"{:.2}\" y=\"{:.2}\" font-family=\"inherit\" font-size=\"{:.2}\" fill=\"#000000\" text-anchor=\"{}\">{}</text>\n",
++                            label_x, cy + bar_w * 0.475 + font * 0.35, font, anchor,
++                            xml_escape(&label)
++                        ));
++                    }
+                 } else {
+                     let cx =
+                         px + cat_slot(ci) + (cat_span - bar_span_total) / 2.0 + bar_w * si as f64;
+@@ -903,6 +919,15 @@ fn render_bars(
+                         "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\" {}/>\n",
+                         cx, by, bar_w * 0.95, bh, color, line_attr(ser.shape_line, "")
+                     ));
++                    if let Some(label) = ser.show_values.then(|| format_clustered_data_label(v, ser.format_code.as_deref())).flatten() {
++                        let font = data_label_font_px(chart, ser);
++                        let label_y = if v < 0.0 { by + bh + font } else { by - 2.0 };
++                        data_labels.push_str(&format!(
++                            "<text class=\"hwp-chart-data-label\" x=\"{:.2}\" y=\"{:.2}\" font-family=\"inherit\" font-size=\"{:.2}\" fill=\"#000000\" text-anchor=\"middle\">{}</text>\n",
++                            cx + bar_w * 0.475, label_y, font,
++                            xml_escape(&label)
++                        ));
++                    }
+                 }
+             }
+         }
+@@ -2762,6 +2787,33 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn clustered_chart_displays_requested_series_values() {
++        let mut chart = bars_chart(BarGrouping::Clustered);
++        chart.series[0].values = vec![65.4];
++        chart.series[0].show_values = true;
++        chart.series[1].values = vec![60.0];
++        chart.series[1].show_values = true;
++        chart.series[2].values = vec![48.0];
++        chart.series[2].show_values = false;
++        chart.categories = vec!["".into()];
++        let svg = render_chart_svg(&chart, 0.0, 0.0, 400.0, 200.0);
++        let labels: Vec<_> = svg.lines().filter(|line| line.contains("hwp-chart-data-label")).collect();
++        assert_eq!(labels.len(), 2);
++        assert!(labels.iter().any(|line| line.contains(">65.4</text>")));
++        assert!(labels.iter().any(|line| line.contains(">60</text>")));
++    }
++
++    #[test]
++    fn clustered_chart_does_not_round_general_values_to_two_decimals() {
++        let mut chart = bars_chart(BarGrouping::Clustered);
++        chart.series[0].values = vec![12.3456];
++        chart.series[0].show_values = true;
++        chart.categories = vec!["".into()];
++        let svg = render_chart_svg(&chart, 0.0, 0.0, 400.0, 200.0);
++        assert!(svg.contains(">12.3456</text>"));
++    }
++
+     #[test]
+     fn test_percent_stacked_axis_and_single_column() {
+         // 백프로: % 축 라벨 + 카테고리당 단일 컬럼
+diff --git a/crates/rhwp-ooxml-chart/src/renderer/cartesian_layout.rs b/crates/rhwp-ooxml-chart/src/renderer/cartesian_layout.rs
+index 1c384696c..97533b192 100644
+--- a/crates/rhwp-ooxml-chart/src/renderer/cartesian_layout.rs
++++ b/crates/rhwp-ooxml-chart/src/renderer/cartesian_layout.rs
+@@ -475,11 +475,8 @@ impl CartesianLayout {
+                 category.bottom_reservation(chart, crosses_inside)
+             };
+             let remaining_height = height - title_height - legend_height - bottom;
+-            let plot_height = if pie || chart.is_3d {
+-                remaining_height.max(0.0)
+-            } else {
+-                remaining_height
+-            };
++            let minimum_height = if pie || chart.is_3d { 0.0 } else { height.clamp(0.0, 1.0) };
++            let plot_height = remaining_height.max(minimum_height);
+             let mut scales = ChartScales::new(chart, plot_width, plot_height);
+             if crosses_inside || (horizontal && !chart.is_3d) {
+                 category.axis_fraction = scales.primary.zero_fraction();

@@ -17,11 +17,28 @@ const screen = () => {
     return xml;
 };
 assert.match(run('get-serialno').trim(), /^emulator-\d+$/);
-for (const type of ['application/pdf', 'text/csv', 'text/comma-separated-values', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/x-hwp', 'application/hwp+zip']) {
+for (const type of ['application/pdf', 'text/csv', 'text/comma-separated-values', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/x-hwp', 'application/hwp+zip']) {
     const result = run('shell', 'cmd', 'package', 'query-activities', '--brief', '-a', 'android.intent.action.VIEW', '-c', 'android.intent.category.DEFAULT', '-t', type, '-d', 'content://example/document/file');
     assert.match(result, /org\.minviewer\.app\//, `${type} 연결 프로그램에 앱이 없습니다`);
 }
 let xml = '';
+for (const [source, name, expected] of [
+    ['.research/office-test/min-restore-word.docx', 'sample.docx', 'LibreOffice 1 / 3'],
+    ['.research/office-test/min-restore-excel.xlsx', 'sample.xlsx', 'LibreOffice 1 / 2'],
+]) {
+    run('push', source, `/data/local/tmp/${name}`);
+    run('shell', 'run-as', 'org.minviewer.sender', 'cp', `/data/local/tmp/${name}`, `files/${name}`);
+    for (const action of ['view', 'send']) {
+        run('shell', 'am', 'force-stop', 'org.minviewer.app');
+        run('shell', 'am', 'start', '-n', 'org.minviewer.sender/.SenderActivity', '--es', 'action', action, '--es', 'name', name, '--ez', 'grant', 'true');
+        for (let i = 0; i < 25; i++) {
+            await delay(700);
+            xml = screen();
+            if (xml.includes(expected) || xml.includes('파일 접근 권한이 없습니다') || xml.includes('오류:')) break;
+        }
+        assert.ok(xml.includes(expected), `${name} 외부 ${action}에 실패했습니다`);
+    }
+}
 for (const action of ['view', 'send']) {
     run('shell', 'am', 'force-stop', 'org.minviewer.app');
     run('shell', 'am', 'start', '-n', 'org.minviewer.sender/.SenderActivity', '--es', 'action', action, '--ez', 'grant', 'true');

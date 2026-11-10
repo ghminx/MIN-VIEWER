@@ -14,12 +14,15 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public class TestProvider extends ContentProvider {
+    private int singleOpenCount = 0;
     @Override public boolean onCreate() { return true; }
     static String mimeType(String name) {
         if (name.endsWith(".pdf")) return "application/pdf";
         if (name.endsWith(".hwp")) return "application/x-hwp";
         if (name.endsWith(".hwpx")) return "application/hwp+zip";
         if (name.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         return "text/csv";
     }
     @Override public String getType(Uri uri) { return mimeType(uri.getLastPathSegment()); }
@@ -30,7 +33,8 @@ public class TestProvider extends ContentProvider {
     }
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
-        if (name == null || !(name.matches("sample\\.(csv|pdf|hwp|hwpx|pptx)") || "pipe.pdf".equals(name)) || !"r".equals(mode)) throw new FileNotFoundException();
+        if (name == null || !(name.matches("sample\\.(csv|pdf|hwp|hwpx|pptx|docx|xlsx)") || "pipe.pdf".equals(name) || "single.csv".equals(name)) || !"r".equals(mode)) throw new FileNotFoundException();
+        if ("single.csv".equals(name) && singleOpenCount++ > 0) throw new FileNotFoundException("시험 스트림을 다시 열 수 없습니다.");
         File file = new File(getContext().getFilesDir(), name);
         if (!"pipe.pdf".equals(name)) return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
         try {

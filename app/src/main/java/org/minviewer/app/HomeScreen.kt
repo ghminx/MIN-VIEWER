@@ -25,12 +25,17 @@ class HomeScreen(
     private val openRecent: (RecentDocument) -> Unit
 ) : FrameLayout(activity) {
     private val navy = Color.rgb(25, 45, 77)
+    private val dark = ThemePreferences.isDark(activity)
+    private val primaryTextColor = if (dark) Color.rgb(230, 234, 240) else navy
+    private val secondary = if (dark) Color.rgb(180, 190, 203) else Color.rgb(95, 105, 119)
     private val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val entries = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val clear = TextView(activity)
+    private var narrowWindow = false
+    private var hasRecent = false
 
     init {
-        setBackgroundColor(Color.rgb(249, 248, 246))
+        setBackgroundColor(if (dark) Color.rgb(25, 29, 36) else Color.rgb(249, 248, 246))
         setOnApplyWindowInsetsListener { view, insets ->
             @Suppress("DEPRECATION")
             view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
@@ -45,30 +50,63 @@ class HomeScreen(
             setPadding(dp(20), dp(20), dp(20), 0)
         }
         centered.addView(column, LayoutParams(-1, -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        val headerTitle = TextView(activity).apply {
+            text = "최근 문서"
+            textSize = 20f
+            setTextColor(primaryTextColor)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+        }
+        var compactWindow: Boolean? = null
         centered.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
             val width = minOf(dp(760), view.width)
             if (width > 0 && column.layoutParams.width != width) {
                 column.layoutParams = (column.layoutParams as LayoutParams).apply { this.width = width }
             }
+            if (view.width > 0) {
+                val compact = view.width < dp(240)
+                val narrow = view.width < dp(320)
+                if (compactWindow != compact) {
+                    compactWindow = compact
+                    val margin = if (compact) 12 else 20
+                    column.setPadding(dp(margin), dp(20), dp(margin), 0)
+                    headerTitle.textSize = if (compact) 16f else 20f
+                }
+                if (narrowWindow != narrow) {
+                    narrowWindow = narrow
+                    clear.visibility = if (hasRecent && !narrowWindow) View.VISIBLE else View.GONE
+                }
+            }
         }
         val header = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(TextView(activity).apply {
-            text = "최근 문서"
-            textSize = 20f
-            setTextColor(navy)
-            typeface = Typeface.DEFAULT_BOLD
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
         clear.apply {
             text = "전체 삭제"
             textSize = 14f
-            setTextColor(navy)
+            setTextColor(primaryTextColor)
             setPadding(dp(12), dp(14), dp(12), dp(14))
-            setOnClickListener {
-                AlertDialog.Builder(activity).setMessage("최근 문서 목록을 모두 지울까요? 원본 파일은 삭제되지 않습니다.")
-                    .setNegativeButton("취소", null).setPositiveButton("삭제") { _, _ -> recent.clear(); refresh() }.show()
-            }
+            setOnClickListener { confirmClear() }
         }
         header.addView(clear)
+        header.addView(TextView(activity).apply {
+            text = "⚙"
+            textSize = 21f
+            gravity = Gravity.CENTER
+            setTextColor(primaryTextColor)
+            contentDescription = "화면 설정"
+            setOnClickListener {
+                AlertDialog.Builder(activity).setTitle("설정").setItems(arrayOf("화면 테마", "글꼴 관리", "최근 문서 전체 삭제")) { _, index ->
+                    if (index == 0) {
+                        AlertDialog.Builder(activity).setTitle("화면 테마")
+                            .setSingleChoiceItems(arrayOf("시스템 설정", "라이트", "다크"), ThemePreferences.selected(activity)) { dialog, selected ->
+                                dialog.dismiss()
+                                ThemePreferences.select(activity, selected)
+                            }.setNegativeButton("취소", null).show()
+                    } else if (index == 1) activity.startActivity(android.content.Intent(activity, FontsActivity::class.java))
+                    else confirmClear()
+                }.show()
+            }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(activity).apply {
             text = "+"
             textSize = 28f
@@ -88,13 +126,14 @@ class HomeScreen(
     fun refresh() {
         entries.removeAllViews()
         val items = recent.all()
-        clear.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+        hasRecent = items.isNotEmpty()
+        clear.visibility = if (hasRecent && !narrowWindow) View.VISIBLE else View.GONE
         if (items.isEmpty()) {
             entries.addView(TextView(activity).apply {
                 text = "최근에 연 문서가 없습니다\n\n+ 버튼을 눌러 문서를 열어 보세요"
                 textSize = 15f
                 gravity = Gravity.CENTER
-                setTextColor(Color.rgb(95, 105, 119))
+                setTextColor(secondary)
             }, LinearLayout.LayoutParams(-1, dp(240)))
             return
         }
@@ -121,21 +160,23 @@ class HomeScreen(
             details.addView(TextView(activity).apply {
                 text = item.name
                 textSize = 16f
-                setTextColor(navy)
+                setTextColor(primaryTextColor)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
             })
             details.addView(TextView(activity).apply {
                 text = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(item.openedAt))
                 textSize = 12f
-                setTextColor(Color.rgb(95, 105, 119))
+                setTextColor(secondary)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
             })
             row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(TextView(activity).apply {
                 text = "⋮"
                 textSize = 24f
                 gravity = Gravity.CENTER
-                setTextColor(navy)
+                setTextColor(primaryTextColor)
                 contentDescription = "${item.name} 목록에서 삭제"
                 setOnClickListener {
                     AlertDialog.Builder(activity).setMessage("최근 문서 목록에서 삭제할까요? 원본 파일은 삭제되지 않습니다.")
@@ -143,8 +184,13 @@ class HomeScreen(
                 }
             }, LinearLayout.LayoutParams(dp(48), dp(48)))
             entries.addView(row)
-            entries.addView(View(activity).apply { setBackgroundColor(Color.rgb(225, 227, 230)) }, LinearLayout.LayoutParams(-1, dp(1)))
+            entries.addView(View(activity).apply { setBackgroundColor(if (dark) Color.rgb(68, 75, 85) else Color.rgb(225, 227, 230)) }, LinearLayout.LayoutParams(-1, dp(1)))
         }
+    }
+
+    private fun confirmClear() {
+        AlertDialog.Builder(activity).setMessage("최근 문서 목록을 모두 지울까요? 원본 파일은 삭제되지 않습니다.")
+            .setNegativeButton("취소", null).setPositiveButton("삭제") { _, _ -> recent.clear(); refresh() }.show()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()

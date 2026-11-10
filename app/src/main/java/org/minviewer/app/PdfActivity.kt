@@ -8,6 +8,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
+import android.graphics.pdf.LoadParams
+import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
@@ -25,6 +27,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.EditText
+import android.text.InputType
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ArrayBlockingQueue
@@ -39,6 +42,14 @@ private object PdfSearchApi35 {
         return matches[index].bounds.map { RectF(it) }
     }
 }
+
+@android.annotation.TargetApi(35)
+private object PdfPasswordApi35 {
+    fun open(descriptor: ParcelFileDescriptor, password: String): PdfRenderer =
+        PdfRenderer(descriptor, LoadParams.Builder().setPassword(password).build())
+}
+
+private class PdfPasswordRequired : IOException()
 
 class PdfActivity : Activity() {
     companion object { private var oldTemporaryFilesCleaned = false }
@@ -74,39 +85,29 @@ class PdfActivity : Activity() {
     @Volatile private var searchGeneration = 0
     @Volatile private var searching = false
     @Volatile private var closed = false
+    private var openedSuccessfully = false
+    private var persistenceReady = false
+    private val recent by lazy { RecentDocuments(this) }
+    private var lastSavedView: Triple<Int, Int, Float>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemePreferences.apply(this)
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        pageIndex = savedInstanceState?.getInt("page") ?: 0
-        mode = savedInstanceState?.getInt("mode") ?: 0
+        window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
+        mode = savedInstanceState?.getInt("mode") ?: intent.getIntExtra("restore_mode", 0)
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
-        zoom = savedInstanceState?.getFloat("zoom") ?: 1f
-        val toolbar = LinearLayout(this)
-        listOf(
-            "뒤로" to { finish() },
-            "이전" to { movePage(-1) },
-            "다음" to { movePage(1) },
-        ).forEach { (label, action) ->
-            toolbar.addView(Button(this).apply { text = label; setOnClickListener { action() } }, toolLayout())
-        }
-        status = TextView(this).apply { text = "PDF를 불러오는 중입니다." }
-        val modes = LinearLayout(this)
-        listOf("연속" to 0, "한쪽" to 1, "두쪽" to 2).forEach { (label, value) ->
-            modes.addView(Button(this).apply { text = label; setOnClickListener { setMode(value) } }, toolLayout())
-        }
-        modes.addView(Button(this).apply { text = "목록"; setOnClickListener { showThumbnails() } }, toolLayout())
-        val zoomTools = LinearLayout(this)
-        listOf("축소" to { setZoom(zoom / 1.5f) }, "확대" to { setZoom(zoom * 1.5f) }).forEach { (label, action) ->
-            zoomTools.addView(Button(this).apply { text = label; textSize = 12f; minWidth = 0; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, toolLayout())
-        }
-        zoomTools.addView(Button(this).apply { text = "검색"; textSize = 12f; minWidth = 0; setPadding(0, 0, 0, 0); setOnClickListener { searchDocument() } }, toolLayout())
+        zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         nextSearch = Button(this).apply {
             text = "다음 찾기"; textSize = 12f; minWidth = 0; setPadding(0, 0, 0, 0); isEnabled = false
             setOnClickListener { if (searchQuery.isNotEmpty() && highlightedPage >= 0) findMatch(searchQuery, highlightedPage, highlightedMatch + 1) }
         }
-        zoomTools.addView(nextSearch, toolLayout())
+        val controls = ViewerControls(this, intent.getStringExtra("name") ?: "PDF", { finish() }, { searchDocument() },
+            { showThumbnails() }, { movePage(-1) }, { movePage(1) }, { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) },
+            listOf("연속 보기" to { setMode(0) }, "한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) },
+                "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }))
+        status = controls.status
         val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 setZoom(zoom * detector.scaleFactor)
@@ -159,13 +160,24 @@ class PdfActivity : Activity() {
                 view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
                 insets
             }
-            addView(toolbar)
-            addView(modes)
-            addView(zoomTools)
-            addView(status)
+            addView(controls)
             addView(contentRow, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(controls.takeBottom())
         })
         val uri = intent.data ?: run { status.text = "PDF 오류: 파일이 없습니다."; return }
+        openDocument(uri, null)
+    }
+
+    private fun createRenderer(descriptor: ParcelFileDescriptor, password: String?): PdfRenderer = try {
+        if (password != null && android.os.Build.VERSION.SDK_INT >= 35) PdfPasswordApi35.open(descriptor, password)
+        else PdfRenderer(descriptor)
+    } catch (error: Exception) {
+        descriptor.close()
+        if (error is SecurityException) throw PdfPasswordRequired()
+        throw error
+    }
+
+    private fun openDocument(uri: Uri, password: String?) {
         worker.execute {
             try {
                 synchronized(PdfActivity::class.java) {
@@ -177,25 +189,18 @@ class PdfActivity : Activity() {
                         oldTemporaryFilesCleaned = true
                     }
                 }
-                val descriptor = contentResolver.openFileDescriptor(uri, "r") ?: throw IOException("파일을 읽을 수 없습니다.")
+                val cached = temporaryFile
+                val descriptor = if (cached != null) ParcelFileDescriptor.open(cached, ParcelFileDescriptor.MODE_READ_ONLY)
+                    else contentResolver.openFileDescriptor(uri, "r") ?: throw IOException("파일을 읽을 수 없습니다.")
                 val opened = try {
-                    PdfRenderer(descriptor)
+                    createRenderer(descriptor, password)
                 } catch (error: IllegalArgumentException) {
-                    descriptor.close()
                     val file = File.createTempFile("pdf-", ".pdf", cacheDir)
                     temporaryFile = file
                     val input = contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")
                     input.use { source -> file.outputStream().use { target -> source.copyTo(target) } }
                     val copiedDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                    try {
-                        PdfRenderer(copiedDescriptor)
-                    } catch (copyError: Exception) {
-                        copiedDescriptor.close()
-                        throw copyError
-                    }
-                } catch (error: Exception) {
-                    descriptor.close()
-                    throw error
+                    createRenderer(copiedDescriptor, password)
                 }
                 renderer = opened
                 pageCount = opened.pageCount
@@ -204,12 +209,35 @@ class PdfActivity : Activity() {
                 if (!closed) runOnUiThread {
                     if (!closed) {
                         setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
+                        openedSuccessfully = true
+                        recent.add(uri, intent.getStringExtra("name") ?: "document.pdf")
                         list.adapter = PageAdapter()
                         list.setSelection(rowForPage(initialPage))
                         updateStatus()
+                        list.post {
+                            if (!closed) {
+                                persistenceReady = true
+                                updateStatus()
+                            }
+                        }
                         if (restorePanel) {
                             restorePanel = false
                             horizontal.post { if (!closed) showThumbnails() }
+                        }
+                    }
+                }
+            } catch (_: PdfPasswordRequired) {
+                if (!closed) runOnUiThread {
+                    if (!closed) {
+                        if (android.os.Build.VERSION.SDK_INT < 35) {
+                            status.text = "PDF 오류: 암호 PDF는 Android 15 이상에서 열 수 있습니다."
+                        } else {
+                            val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+                            AlertDialog.Builder(this).setTitle("PDF 비밀번호")
+                                .setMessage(if (password == null) "비밀번호를 입력해 주세요." else "비밀번호가 맞지 않거나 지원하지 않는 암호 방식입니다.")
+                                .setView(input).setNegativeButton("취소") { _, _ -> finish() }
+                                .setOnCancelListener { finish() }
+                                .setPositiveButton("열기") { _, _ -> openDocument(uri, input.text.toString()) }.show()
                         }
                     }
                 }
@@ -217,6 +245,23 @@ class PdfActivity : Activity() {
                 if (!closed) runOnUiThread { if (!closed) status.text = "PDF 오류: ${error.message}" }
             }
         }
+    }
+
+    private fun saveResult() {
+        if (openedSuccessfully) {
+            setResult(RESULT_OK, android.content.Intent().setData(intent.data).putExtra("name", intent.getStringExtra("name"))
+                .putExtra("view_page", pageIndex).putExtra("view_mode", mode.toString()).putExtra("view_zoom", zoom))
+        }
+    }
+
+    override fun finish() {
+        saveResult()
+        super.finish()
+    }
+
+    override fun onStop() {
+        saveResult()
+        super.onStop()
     }
 
     private fun showPage(index: Int) {
@@ -262,13 +307,20 @@ class PdfActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = "PDF ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
+        status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
+        status.contentDescription = "PDF ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
+        val currentView = Triple(pageIndex, mode, zoom)
+        if (persistenceReady && currentView != lastSavedView) {
+            intent.data?.let { recent.updateView(it, pageIndex, mode.toString(), zoom) }
+            lastSavedView = currentView
+        }
     }
 
     private fun searchDocument() {
         if (pageCount == 0) return
         if (android.os.Build.VERSION.SDK_INT < 35) {
             searchMessage = " · 이 Android 버전에서는 PDF 검색을 지원하지 않습니다"
+            android.widget.Toast.makeText(this, "이 Android 버전에서는 PDF 검색을 지원하지 않습니다", android.widget.Toast.LENGTH_LONG).show()
             updateStatus()
             return
         }
@@ -325,6 +377,7 @@ class PdfActivity : Activity() {
                         highlightedHeight = height
                         nextSearch.isEnabled = found >= 0
                         searchMessage = if (found >= 0) " · 검색 결과 · 이 페이지 ${matchIndex + 1}번째" else " · 검색 결과 없음"
+                        android.widget.Toast.makeText(this, searchMessage.removePrefix(" · "), android.widget.Toast.LENGTH_SHORT).show()
                         (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
                         if (found >= 0) list.post {
                             if (!closed && generation == searchGeneration) showPage(found)
