@@ -78,9 +78,8 @@ for (const [name, count, listDesc, choice] of [
     const compare = "import sys; sys.path.insert(0,'.research/py'); from PIL import Image, ImageChops; a=Image.open(sys.argv[1]).convert('RGB').crop((0,72,320,568)); b=Image.open(sys.argv[2]).convert('RGB').crop((0,72,320,568)); sys.exit(0 if ImageChops.difference(a,b).getbbox() is None else 1)";
     execFileSync('python', ['-c', compare, `.research/office-test/${name}-before.png`, `.research/office-test/${name}-after.png`]);
     run('shell', 'input', 'keyevent', 'BACK');
-    await waitFor(/문서 보기 선택|원본 페이지 보기/);
-    run('shell', 'input', 'keyevent', 'BACK');
     xml = await waitFor(new RegExp(`text="${name}"`));
+    assert.doesNotMatch(xml, /경량 엔진 보기|LibreOffice 시험/);
     tap(xml, 'text', name);
     await waitFor(new RegExp(`LibreOffice ${count} / ${count}[^\"]*150%`));
     await delay(1000);

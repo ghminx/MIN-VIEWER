@@ -27,7 +27,7 @@ try {
     run('shell', 'am', 'force-stop', 'org.minviewer.app');
     run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'application/x-hwp', '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
     let xml = await waitFor(/1 \/ 35/);
-    assert.doesNotMatch(xml, /차트의 값이나 모양이 원본과 다를 수 있습니다/);
+    assert.doesNotMatch(xml, /차트 값·색상·모양이 원본과 다를 수 있습니다/);
     tap(xml, 'content-desc', '더보기');
     xml = await waitFor(/text="한쪽 보기"/);
     tap(xml, 'text', '한쪽 보기');
@@ -41,7 +41,7 @@ try {
         }
         tap(xml, 'text', String(page));
         xml = await waitFor(new RegExp(`${page} / 35`));
-        if (page === 24) await waitFor(/차트의 값이나 모양이 원본과 다를 수 있습니다/);
+        if (page === 24) await waitFor(/차트 값·색상·모양이 원본과 다를 수 있습니다/);
         tap(xml, 'content-desc', '목록');
         await delay(1000);
         run('shell', 'screencap', '-p', '/sdcard/min-hwp-quality.png');
@@ -49,7 +49,7 @@ try {
     }
     run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'application/x-hwp', '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
     xml = await waitFor(/1 \/ 35/);
-    assert.doesNotMatch(xml, /차트의 값이나 모양이 원본과 다를 수 있습니다/, '다시 열 때 이전 경고가 남음');
+    assert.doesNotMatch(xml, /차트 값·색상·모양이 원본과 다를 수 있습니다/, '다시 열 때 이전 경고가 남음');
 } finally {
     run('shell', 'wm', 'size', 'reset');
     run('shell', 'wm', 'density', 'reset');

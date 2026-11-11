@@ -33,18 +33,12 @@ val checkEngineAssets by tasks.registering {
         check(rootProject.file(".research/engine-poc/node_modules/@rhwp/core/notices").isDirectory) {
             "한글 엔진 의존성 고지 설치 필요: docs/ANDROID_POC.md 참고"
         }
-        check(rootProject.file(".research/engine-poc/node_modules/@opendocument/odr-core/odr-core.wasm").exists()) {
-            "npm 엔진 패키지 설치 필요: docs/ANDROID_POC.md 참고"
-        }
-        check(rootProject.file(".research/office-alternatives/pptx-viewer.js").exists()) {
-            "PPTX 시험 번들 생성 필요: docs/ANDROID_POC.md 참고"
-        }
         check(rootProject.file(".research/office-alternatives/libreoffice-built-arm64-unsigned.apk").exists()) {
             "LibreOffice ARM64 시험 빌드 필요: docs/ANDROID_POC.md 참고"
         }
     }
 }
-val prepareEngineAssets by tasks.registering(Copy::class) {
+val prepareEngineAssets by tasks.registering(Sync::class) {
     dependsOn(checkEngineAssets)
     from(rootProject.file(".research/rhwp-patched")) {
         include("rhwp.js", "rhwp_bg.wasm", "LICENSE")
@@ -53,18 +47,6 @@ val prepareEngineAssets by tasks.registering(Copy::class) {
     from(rootProject.file(".research/engine-poc/node_modules/@rhwp/core")) {
         include("notices/**")
         into("rhwp")
-    }
-    from(rootProject.file(".research/engine-poc/node_modules/@opendocument/odr-core")) {
-        include("index.js", "odr-core.mjs", "odr-core.wasm")
-        into("odr")
-    }
-    from(rootProject.file(".research/office-alternatives/pptx-viewer.js")) { into("pptx") }
-    from(rootProject.file(".research/office-alternatives/node_modules/@office-kit/pptx")) {
-        include("LICENSE", "THIRD_PARTY_NOTICES.md")
-        into("pptx/licenses")
-    }
-    from(rootProject.file(".research/office-alternatives/node_modules/fflate/LICENSE")) {
-        into("pptx/licenses/fflate")
     }
     into(layout.buildDirectory.dir("generated/engine-assets"))
 }

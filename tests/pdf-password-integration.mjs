@@ -18,7 +18,9 @@ const tap = (xml, value) => {
 };
 
 assert.match(run('get-serialno').trim(), /^emulator-\d+$/);
-execFileSync('python', ['-c', "import sys; sys.path.insert(0,'.research/py'); import pymupdf as f; d=f.open(); p=d.new_page(); p.insert_text((72,72),'Password test'); d.save('.research/pdf-test/min-encrypted.pdf', encryption=f.PDF_ENCRYPT_AES_256, owner_pw='owner-test', user_pw='reader-test')"]);
+const encryption = process.env.PDF_ENCRYPTION ?? 'AES_256';
+assert.ok(['AES_256', 'AES_128', 'RC4_128', 'RC4_40'].includes(encryption));
+execFileSync('python', ['-c', "import sys; sys.path.insert(0,'.research/py'); import pymupdf as f; d=f.open(); p=d.new_page(); p.insert_text((72,72),'Password test'); d.save('.research/pdf-test/min-encrypted.pdf', encryption=getattr(f,'PDF_ENCRYPT_'+sys.argv[1]), owner_pw='owner-test', user_pw='reader-test')", encryption]);
 run('push', '.research/pdf-test/min-encrypted.pdf', '/sdcard/Download/min-encrypted.pdf');
 run('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/min-encrypted.pdf');
 const records = run('shell', 'content', 'query', '--uri', 'content://media/external/file', '--projection', '_id:_display_name');
@@ -35,4 +37,4 @@ run('shell', 'input', 'text', 'reader-test');
 xml = screen();
 tap(xml, '열기');
 await waitFor(/PDF 1 \/ 1/);
-console.log('암호 PDF의 잘못된 비밀번호 안내 및 올바른 비밀번호 열기 확인 완료');
+console.log(`${encryption} 암호 PDF의 잘못된 비밀번호 안내 및 올바른 비밀번호 열기 확인 완료`);

@@ -1,6 +1,4 @@
 import initRhwp, { HwpDocument } from './rhwp/rhwp.js';
-import { Odr } from './odr/index.js';
-import { loadPresentation, getSlides, renderSlideToSvg } from './pptx/pptx-viewer.js';
 import { substituteEquationGlyphs } from './equation-glyphs.mjs';
 
 const status = document.querySelector('#status');
@@ -10,10 +8,7 @@ globalThis.measureTextWidth = (font, text) => { context.font = font; return cont
 
 let documentHandle;
 let views = [];
-let currentKind;
-let isSlide = false;
 let rhwpReady;
-let odrReady;
 let sequence = 0;
 let activeGeneration = 0;
 let pendingFetch;
@@ -53,10 +48,7 @@ window.resetDocument = () => {
     page.style.background = '';
     pendingFetch?.abort();
     pendingFetch = undefined;
-    if (documentHandle) {
-        if (currentKind === 'hwp') documentHandle.free();
-        else if (currentKind === 'office') documentHandle.close();
-    }
+    if (documentHandle) documentHandle.free();
     documentHandle = null;
     views = [];
     page.replaceChildren();
@@ -103,7 +95,7 @@ function hwpFrame(index) {
 }
 
 window.setHwpMode = (mode, index) => {
-    if (currentKind !== 'hwp' || !documentHandle || !['continuous', 'single', 'spread'].includes(mode)) return;
+    if (!documentHandle || !['continuous', 'single', 'spread'].includes(mode)) return;
     const layoutGeneration = ++hwpLayoutGeneration;
     hwpObserver?.disconnect();
     hwpObserver = undefined;
@@ -140,7 +132,7 @@ window.setHwpMode = (mode, index) => {
         });
         const generation = activeGeneration;
         hwpObserver = new IntersectionObserver(entries => {
-            if (layoutGeneration !== hwpLayoutGeneration || generation !== activeGeneration || !documentHandle || currentKind !== 'hwp') return;
+            if (layoutGeneration !== hwpLayoutGeneration || generation !== activeGeneration || !documentHandle) return;
             for (const entry of entries) {
                 const slot = entry.target;
                 if (entry.isIntersecting && !slot.firstChild) {
@@ -159,7 +151,7 @@ window.setHwpMode = (mode, index) => {
         }, {rootMargin: '100% 0px'});
         const visibleSlots = new Set();
         hwpActiveObserver = new IntersectionObserver(entries => {
-            if (layoutGeneration !== hwpLayoutGeneration || generation !== activeGeneration || !documentHandle || currentKind !== 'hwp') return;
+            if (layoutGeneration !== hwpLayoutGeneration || generation !== activeGeneration || !documentHandle) return;
             for (const entry of entries) {
                 if (entry.isIntersecting) visibleSlots.add(entry.target);
                 else visibleSlots.delete(entry.target);
@@ -180,7 +172,6 @@ window.setHwpMode = (mode, index) => {
 };
 
 window.showOpenError = () => { status.textContent = '파일을 읽을 수 없습니다.'; };
-window.showEngineChoice = () => { status.textContent = '경량 엔진에서 문서를 다시 열 수 있습니다.'; };
 
 function hwpMatchResult(match, number, total, canNext) {
     let target;
@@ -227,7 +218,7 @@ function setHwpHighlights(rects) {
 
 window.searchHwp = query => {
     hwpSearchState = undefined;
-    if (currentKind !== 'hwp' || !documentHandle || !query.trim()) return { found: false };
+    if (!documentHandle || !query.trim()) return { found: false };
     const match = JSON.parse(documentHandle.searchText(query, 0, 0, 0, true, false, true));
     if (!match.found) { setHwpHighlights([]); if (hwpMode === 'single') window.showPage(hwpCurrentPage); return { found: false }; }
     const total = match.totalMatchCount;
@@ -241,7 +232,7 @@ window.searchHwp = query => {
 };
 
 window.nextHwpResult = () => {
-    if (!hwpSearchState || !documentHandle || currentKind !== 'hwp') return { found: false };
+    if (!hwpSearchState || !documentHandle) return { found: false };
     hwpSearchState.index = (hwpSearchState.index + 1) % hwpSearchState.matches.length;
     return hwpMatchResult(hwpSearchState.matches[hwpSearchState.index], hwpSearchState.index + 1, hwpSearchState.matches.length, true);
 };
@@ -253,7 +244,7 @@ window.showHwpSearchResult = index => {
     const generation = activeGeneration;
     const layoutGeneration = hwpLayoutGeneration;
     requestAnimationFrame(() => {
-        if (generation !== activeGeneration || layoutGeneration !== hwpLayoutGeneration || currentKind !== 'hwp' || hwpCurrentPage !== index) return;
+        if (generation !== activeGeneration || layoutGeneration !== hwpLayoutGeneration || hwpCurrentPage !== index) return;
         const container = hwpMode === 'single' ? page : page.children[index];
         if (!container) return;
         const info = JSON.parse(documentHandle.getPageInfo(index));
@@ -268,69 +259,37 @@ window.showHwpSearchResult = index => {
 
 window.openDocument = async (url, name, generation, password = null) => {
     const request = ++sequence;
-    const kind = /\.hwpx?$/i.test(name) ? 'hwp' : (/\.pptx$/i.test(name) ? 'pptx' : 'office');
     pendingFetch?.abort();
     const controller = new AbortController();
     pendingFetch = controller;
     try {
-        const extension = name.split('.').pop().toLowerCase();
-        if (kind === 'office' && !['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(extension)) {
-            throw new Error('지원하지 않는 문서 형식입니다.');
-        }
+        if (!/\.hwpx?$/i.test(name)) throw new Error('지원하지 않는 문서 형식입니다.');
         const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
         if (!response.ok) throw new Error('파일을 읽을 수 없습니다.');
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (request !== sequence) return;
-        let handle;
+        rhwpReady ||= initRhwp({module_or_path: '/rhwp/rhwp_bg.wasm'});
+        await rhwpReady;
+        if (request !== sequence) return;
+        const handle = password === null ? new HwpDocument(bytes) : HwpDocument.openWithPassword(bytes, password);
         let availableViews;
-        if (kind === 'hwp') {
-            rhwpReady ||= initRhwp({module_or_path: '/rhwp/rhwp_bg.wasm'});
-            await rhwpReady;
-            if (request !== sequence) return;
-            handle = password === null ? new HwpDocument(bytes) : HwpDocument.openWithPassword(bytes, password);
-            try {
-                availableViews = Array.from({length: handle.pageCount()}, (_, index) => index);
-            } catch (error) {
-                handle.free();
-                throw error;
-            }
-        } else if (kind === 'pptx') {
-            const presentation = await loadPresentation(bytes);
-            if (request !== sequence) return;
-            const slides = getSlides(presentation);
-            handle = { presentation, slides };
-            availableViews = slides.map((_, index) => index);
-        } else {
-            odrReady ||= Odr.load();
-            const odr = await odrReady;
-            if (request !== sequence) return;
-            handle = odr.open(bytes, {name});
-            try {
-                const expected = odr.fileTypes().find(type => type.extensions.includes(extension));
-                if (!expected || handle.fileType !== expected.fileType) {
-                    throw new Error('파일 내용과 확장자가 일치하지 않습니다.');
-                }
-                const available = handle.listViews();
-                const parts = available.filter(item => /^(sheet|slide)\d+\.html$/.test(item.path));
-                availableViews = (parts.length ? parts : available).map(item => item.index);
-            } catch (error) {
-                handle.close();
-                throw error;
-            }
+        try {
+            availableViews = Array.from({length: handle.pageCount()}, (_, index) => index);
+        } catch (error) {
+            handle.free();
+            throw error;
         }
         if (!availableViews.length) {
-            if (kind === 'hwp') handle.free(); else if (kind === 'office') handle.close();
+            handle.free();
             throw new Error('표시할 페이지가 없습니다.');
         }
         documentHandle = handle;
-        currentKind = kind;
-        isSlide = /\.pptx?$/i.test(name);
         activeGeneration = generation;
         views = availableViews;
         window.Android.onOpened(views.length, generation);
     } catch (error) {
         if (request !== sequence) return;
-        if (kind === 'hwp' && /비밀번호가 필요한 암호 문서|비밀번호가 일치하지 않/u.test(String(error))) {
+        if (/비밀번호가 필요한 암호 문서|비밀번호가 일치하지 않/u.test(String(error))) {
             window.Android.onHwpPasswordRequired(generation, password !== null);
             return;
         }
@@ -343,56 +302,24 @@ window.openDocument = async (url, name, generation, password = null) => {
 
 window.showPage = index => {
     if (!documentHandle || index < 0 || index >= views.length) return;
-    if (currentKind === 'hwp') hwpCurrentPage = index;
+    hwpCurrentPage = index;
     try {
-        if (currentKind === 'hwp' && hwpMode !== 'single') {
+        if (hwpMode !== 'single') {
             page.children[index]?.scrollIntoView({block: 'start'});
             window.Android.onPageShown(index, activeGeneration);
             return;
         }
-        let element;
-        if (currentKind === 'hwp') {
-            const frame = hwpFrame(index);
-            const info = JSON.parse(documentHandle.getPageInfo(index));
-            if (info.width > 0 && info.height > 0) frame.style.height = `${Math.ceil(page.clientWidth * info.height / info.width)}px`;
-            element = frame;
-        } else if (currentKind === 'pptx') {
-            const output = renderSlideToSvg(documentHandle.presentation, documentHandle.slides[index]);
-            const parsed = new DOMParser().parseFromString(output, 'image/svg+xml');
-            if (parsed.querySelector('parsererror')) throw new Error('SVG 표시 실패');
-            const svg = parsed.documentElement;
-            const frame = document.createElement('iframe');
-            frame.setAttribute('sandbox', '');
-            frame.title = '문서';
-            const size = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number);
-            if (size?.length === 4 && size[2] > 0 && size[3] > 0) {
-                frame.style.height = `${Math.ceil(page.clientWidth * size[3] / size[2])}px`;
-            }
-            frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>body{margin:0}svg{display:block;width:100%;height:auto}</style>${new XMLSerializer().serializeToString(svg)}`;
-            element = frame;
-        } else {
-            const frame = document.createElement('iframe');
-            frame.setAttribute('sandbox', '');
-            frame.title = '문서';
-            let html = documentHandle.render(views[index]).html;
-            html = html.replace('</head>', `<style>${userFontStyles()}</style></head>`);
-            if (isSlide) {
-                const size = html.match(/class="odr-page-outer"\s+style="width:([\d.]+)in;height:([\d.]+)in/);
-                if (size) {
-                    const width = Number(size[1]) * 96;
-                    const height = Number(size[2]) * 96;
-                    const scale = Math.min(1, Math.max(0.1, (page.clientWidth - 32) / width));
-                    html = html.replace('</head>', `<style>body{zoom:${scale};margin:0!important}</style></head>`);
-                    frame.style.height = `${Math.ceil((height + 64) * scale)}px`;
-                }
-            }
-            frame.srcdoc = html;
-            element = frame;
+        const frame = hwpFrame(index);
+        const info = JSON.parse(documentHandle.getPageInfo(index));
+        if (info.width > 0 && info.height > 0) {
+            const availableHeight = Math.max(1, window.innerHeight - status.offsetHeight - 36);
+            const width = Math.min(page.clientWidth, availableHeight * info.width / info.height);
+            frame.style.width = `${width}px`;
+            frame.style.height = `${Math.ceil(width * info.height / info.width)}px`;
+            frame.style.margin = 'auto';
         }
-        page.replaceChildren(element);
-        status.textContent = currentKind === 'hwp'
-            ? '시험용 한글 보기: 원본과 다르게 표시될 수 있습니다.'
-            : '시험용 Office 보기: 일부 배치나 내용이 원본과 다를 수 있습니다.';
+        page.replaceChildren(frame);
+        status.textContent = '시험용 한글 보기: 원본과 다르게 표시될 수 있습니다.';
         window.Android.onPageShown(index, activeGeneration);
     } catch (error) { status.textContent = `페이지 표시 실패: ${error.message}`; }
 };

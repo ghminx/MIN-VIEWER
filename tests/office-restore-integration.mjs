@@ -25,10 +25,21 @@ const tap = (xml, attribute, value) => {
 };
 
 assert.match(run('get-serialno').trim(), /^emulator-\d+$/);
+const name = '02_quarterly_review_ko.pptx';
+run('push', `.research/engine-poc/${name}`, `/sdcard/Download/${name}`);
+run('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', `file:///sdcard/Download/${name}`);
 run('shell', 'am', 'force-stop', 'org.minviewer.app');
 run('shell', 'am', 'start', '-n', 'org.minviewer.app/.MainActivity');
-let xml = await waitFor(/text="02_quarterly_review_ko\.pptx"/);
-tap(xml, 'text', '02_quarterly_review_ko.pptx');
+let xml = await waitFor(/content-desc="파일 열기"/);
+tap(xml, 'content-desc', '파일 열기');
+xml = await waitFor(/content-desc="Search"/);
+tap(xml, 'content-desc', 'Search');
+run('shell', 'input', 'text', name);
+run('shell', 'input', 'keyevent', 'ENTER');
+xml = await waitFor(new RegExp(`content-desc="Preview the file ${name}"`));
+const preview = xml.match(new RegExp(`content-desc="Preview the file ${name}"[^>]*bounds="\\[(\\d+),(\\d+)\\]`));
+assert.ok(preview);
+run('shell', 'input', 'tap', String(+preview[1] - 40), String(+preview[2] + 60));
 xml = await waitFor(/LibreOffice \d+ \/ 3/);
 for (let i = 0; i < 3; i++) { tap(xml, 'content-desc', '이전'); xml = screen(); }
 xml = await waitFor(/LibreOffice 1 \/ 3/);

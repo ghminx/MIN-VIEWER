@@ -30,7 +30,8 @@ try {
     tap(xml, 'content-desc', '더보기');
     xml = await waitFor(/text="한쪽 보기"/);
     tap(xml, 'text', '한쪽 보기');
-    for (const page of [1, 22, 46]) {
+    const pages = process.env.HWPX_PAGES ? process.env.HWPX_PAGES.split(',').map(Number) : [1, 22, 46];
+    for (const page of pages) {
         if (page !== 1) {
             xml = await waitFor(/\d+ \/ 46/);
             tap(xml, 'content-desc', '목록');

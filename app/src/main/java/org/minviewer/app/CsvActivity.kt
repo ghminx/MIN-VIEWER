@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.HorizontalScrollView
@@ -30,11 +32,17 @@ class CsvActivity : Activity() {
     private var cursor: Cursor? = null
     private lateinit var status: TextView
     private lateinit var list: ListView
+    private lateinit var scroller: HorizontalScrollView
+    private lateinit var scaleDetector: ScaleGestureDetector
     private lateinit var previous: Button
     private lateinit var next: Button
     private lateinit var encodingButton: Button
     private var page = 0
     private var encoding: String? = null
+    private var zoom = 1f
+    private var columns = 1
+    private var statusBase = ""
+    private var touchInDocument = false
     @Volatile private var generation = 0
     @Volatile private var closed = false
 
@@ -44,6 +52,7 @@ class CsvActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         page = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
+        zoom = (savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)).coerceIn(1f, 4f)
         encoding = savedInstanceState?.getString("encoding") ?: intent.getStringExtra("restore_encoding")
             ?.takeIf { it == "UTF-8" || it == "CP949" }
         val toolbar = LinearLayout(this).apply {
@@ -93,7 +102,17 @@ class CsvActivity : Activity() {
             setPadding(12, 8, 12, 8)
         }
         list = ListView(this)
-        val scroller = HorizontalScrollView(this).apply { addView(list) }
+        scroller = HorizontalScrollView(this).apply { addView(list) }
+        scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor))
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                saveView()
+            }
+        }).apply { isQuickScaleEnabled = false }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setOnApplyWindowInsetsListener { view, insets ->
@@ -164,19 +183,18 @@ class CsvActivity : Activity() {
                         }
                         page = index
                         encoding = charset
-                        val recent = RecentDocuments(this@CsvActivity)
-                        recent.add(uri, intent.getStringExtra("name") ?: "document")
-                        recent.updateView(uri, page, charset, 1f)
-                        val columns = rows.maxOfOrNull { it.size } ?: 1
-                        val width = (160 * resources.displayMetrics.density).toInt()
-                        list.layoutParams = android.widget.FrameLayout.LayoutParams(maxOf(resources.displayMetrics.widthPixels, columns * width), -1)
-                        list.adapter = RowAdapter(rows, width)
+                        RecentDocuments(this@CsvActivity).add(uri, intent.getStringExtra("name") ?: "document")
+                        columns = rows.maxOfOrNull { it.size } ?: 1
+                        list.adapter = RowAdapter(rows)
+                        applyZoom()
+                        saveView()
                         list.setSelection(rowInPage.coerceAtMost(rows.lastIndex.coerceAtLeast(0)))
                         setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                         previous.isEnabled = page > 0
                         next.isEnabled = hasNext
                         encodingButton.isEnabled = true
-                        status.text = if (rows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.size}행 · $charset"
+                        statusBase = if (rows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.size}행 · $charset"
+                        updateZoomStatus()
                     }
                 }
             } catch (error: Exception) {
@@ -275,7 +293,52 @@ class CsvActivity : Activity() {
         }
     }
 
-    private inner class RowAdapter(private val rows: List<List<String>>, private val cellWidth: Int) : BaseAdapter() {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val location = IntArray(2)
+            if (::scroller.isInitialized) scroller.getLocationOnScreen(location)
+            touchInDocument = ::scroller.isInitialized && event.rawX >= location[0] && event.rawX < location[0] + scroller.width &&
+                event.rawY >= location[1] && event.rawY < location[1] + scroller.height
+        }
+        if (touchInDocument && ::scaleDetector.isInitialized) {
+            scaleDetector.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) list.parent.requestDisallowInterceptTouchEvent(true)
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun cellWidth() = (160 * resources.displayMetrics.density * zoom).toInt().coerceAtLeast(1)
+
+    private fun applyZoom() {
+        list.layoutParams = android.widget.FrameLayout.LayoutParams(maxOf(scroller.width, columns * cellWidth()), -1)
+        (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
+    }
+
+    private fun setZoom(value: Float) {
+        val next = value.coerceIn(1f, 4f)
+        if (next == zoom || list.adapter == null) return
+        val first = list.firstVisiblePosition
+        val top = list.getChildAt(0)?.top ?: 0
+        val horizontalPosition = scroller.scrollX
+        val ratio = next / zoom
+        zoom = next
+        applyZoom()
+        list.setSelectionFromTop(first, (top * ratio).toInt())
+        scroller.post { scroller.scrollTo((horizontalPosition * ratio).toInt(), 0) }
+        updateZoomStatus()
+    }
+
+    private fun updateZoomStatus() {
+        if (statusBase.isNotEmpty()) status.text = "$statusBase · ${(zoom * 100).toInt()}%"
+    }
+
+    private fun saveView() {
+        val uri = intent.data ?: return
+        val charset = encoding ?: return
+        RecentDocuments(this).updateView(uri, page, charset, zoom)
+    }
+
+    private inner class RowAdapter(private val rows: List<List<String>>) : BaseAdapter() {
         override fun getCount() = rows.size
         override fun getItem(position: Int) = rows[position]
         override fun getItemId(position: Int) = position.toLong()
@@ -284,11 +347,11 @@ class CsvActivity : Activity() {
             rows[position].forEach { cell ->
                 row.addView(TextView(this@CsvActivity).apply {
                     text = cell
-                    textSize = 14f
+                    textSize = 14f * zoom
                     setPadding(8, 8, 8, 8)
                     setTextColor(Color.BLACK)
                     setBackgroundColor(Color.WHITE)
-                }, LinearLayout.LayoutParams(cellWidth, -2))
+                }, LinearLayout.LayoutParams(cellWidth(), -2))
             }
             return row
         }
@@ -297,6 +360,7 @@ class CsvActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("page", page)
         outState.putString("encoding", encoding)
+        outState.putFloat("zoom", zoom)
         super.onSaveInstanceState(outState)
     }
 

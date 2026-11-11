@@ -11,6 +11,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
@@ -76,6 +78,10 @@ class OfficeActivity : Activity() {
     @Volatile private var viewportWidth = 0
     @Volatile private var viewportHeight = 0
     private var wasScaling = false
+    private var swipeAnimationTarget = -1
+    private var swipeAnimationDirection = 0
+    private var touchInDocument = false
+    private lateinit var scaleDetector: ScaleGestureDetector
     private var pageLimit = " · 시험용"
     private var searchMessage = ""
     private var searchQuery = ""
@@ -121,22 +127,21 @@ class OfficeActivity : Activity() {
             { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) }, listOf("다음 검색 결과" to { searchNext() }))
         status = controls.status
         slideList = controls.listButton.apply { visibility = View.GONE }
-        val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 wasScaling = true
-                setZoom(zoom * detector.scaleFactor)
+                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), detector.focusX, detector.focusY)
                 return true
             }
-        })
+        }).apply { isQuickScaleEnabled = false }
         image = ImageView(this).apply {
             adjustViewBounds = true
             contentDescription = "문서 화면"
             setOnTouchListener { view, event ->
-                scaleDetector.onTouchEvent(event)
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         touchX = event.x; touchY = event.y; wasScaling = false
-                        if (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) view.parent.requestDisallowInterceptTouchEvent(true)
+                        view.parent.requestDisallowInterceptTouchEvent(true)
                         true
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true; view.parent.requestDisallowInterceptTouchEvent(true); true }
@@ -144,7 +149,17 @@ class OfficeActivity : Activity() {
                     MotionEvent.ACTION_UP -> {
                         val dx = event.x - touchX
                         val dy = event.y - touchY
-                        if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) && view.width > 0 && view.height > 0 && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) {
+                        val horizontalSwipe = kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
+                            kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f
+                        if (!wasScaling && documentType != Document.DOCTYPE_SPREADSHEET && zoom <= 1f && horizontalSwipe) {
+                            val direction = if (dx < 0) 1 else -1
+                            val target = pageIndex + direction
+                            if (target in 0 until pageCount) {
+                                swipeAnimationTarget = target
+                                swipeAnimationDirection = direction
+                                showPage(target)
+                            }
+                        } else if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) && view.width > 0 && view.height > 0 && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) {
                             showPage(pageIndex, viewportX - (dx * tileWidth / view.width).toInt(), viewportY - (dy * tileHeight / view.height).toInt())
                         } else if (!wasScaling && kotlin.math.abs(dx) <= 10 && kotlin.math.abs(dy) <= 10) view.performClick()
                         true
@@ -154,14 +169,19 @@ class OfficeActivity : Activity() {
             }
         }
         viewport = ScrollView(this).apply {
-            addView(image, android.widget.FrameLayout.LayoutParams(-1, -2))
+            isFillViewport = true
+            addView(image, android.widget.FrameLayout.LayoutParams(-1, -1))
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
                 val width = right - left
                 val height = bottom - top
                 val changed = width != viewportWidth || height != viewportHeight
                 viewportWidth = width
                 viewportHeight = height
-                if (changed && !slidePanelAnimating && pageCount > 0 && zoom > 1f && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
+                if (documentType != Document.DOCTYPE_SPREADSHEET && height > 0) {
+                    image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, height)
+                    image.scaleType = ImageView.ScaleType.FIT_CENTER
+                }
+                if (changed && !slidePanelAnimating && pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }
         contentRow = LinearLayout(this).apply {
@@ -185,9 +205,23 @@ class OfficeActivity : Activity() {
             status.text = "LibreOffice 오류: 지원하지 않는 문서입니다."
             return
         }
+        status.postDelayed({
+            val waitingForPassword = synchronized(this) { passwordLatch != null }
+            if (!closed && !openedSuccessfully && !waitingForPassword && status.text == "불러오는 중") {
+                status.text = "열기 지연 · 뒤로 닫기"
+            }
+        }, 20000)
         worker.execute {
             try {
-                copyAssets("unpack", File(applicationInfo.dataDir))
+                cacheDir.listFiles()?.filter { it.isFile && it.name.startsWith("asset-") && it.name.endsWith(".tmp") }?.forEach { it.delete() }
+                @Suppress("DEPRECATION")
+                val updatedAt = packageManager.getPackageInfo(packageName, 0).lastUpdateTime
+                val assetPreferences = getSharedPreferences("office-assets", MODE_PRIVATE)
+                val refreshAssets = assetPreferences.getLong("updated-at", -1) != updatedAt
+                copyAssets("unpack", File(applicationInfo.dataDir), refreshAssets)
+                if (refreshAssets && !assetPreferences.edit().putLong("updated-at", updatedAt).commit()) {
+                    throw IOException("엔진 자산 상태를 저장할 수 없습니다.")
+                }
                 cacheDir.listFiles()?.filter { it.isFile && it.name.startsWith("lok-") && it !in activeFiles }?.forEach { it.delete() }
                 val file = File.createTempFile("lok-", ".$extension", cacheDir)
                 temporaryFile = file
@@ -195,12 +229,30 @@ class OfficeActivity : Activity() {
                 val input = contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")
                 input.use { source -> file.outputStream().use { target -> source.copyTo(target) } }
                 if (closed) return@execute
-                val signature = ByteArray(4)
-                val count = file.inputStream().use { it.read(signature) }
+                val header = ByteArray(32)
+                val count = file.inputStream().use { it.read(header) }
+                val signature = header.copyOfRange(0, 4)
                 val zip = byteArrayOf(0x50, 0x4b, 0x03, 0x04)
-                val compound = byteArrayOf(0xd0.toByte(), 0xcf.toByte(), 0x11, 0xe0.toByte())
-                if (count != 4 || (!signature.contentEquals(zip) && !signature.contentEquals(compound))) {
+                val compound = byteArrayOf(0xd0.toByte(), 0xcf.toByte(), 0x11, 0xe0.toByte(),
+                    0xa1.toByte(), 0xb1.toByte(), 0x1a, 0xe1.toByte())
+                val isCompound = count >= 8 && header.copyOfRange(0, 8).contentEquals(compound)
+                if (count < 4 || (!signature.contentEquals(zip) && !isCompound)) {
                     throw IOException("파일 내용이 형식과 다릅니다.")
+                }
+                if (isCompound && count >= 32 &&
+                    header[26] == 4.toByte() && header[27] == 0.toByte() &&
+                    header[30] == 12.toByte() && header[31] == 0.toByte()) {
+                    closeDocument()
+                    runOnUiThread {
+                        if (!closed) {
+                            status.text = "지원되지 않는 파일"
+                            setResult(RESULT_CANCELED, Intent().putExtra("unsupported_storage", true))
+                            AlertDialog.Builder(this).setTitle("파일을 열 수 없습니다")
+                                .setMessage("이 Office 파일의 저장 방식은 현재 지원하지 않습니다.")
+                                .setCancelable(false).setPositiveButton("확인") { _, _ -> finish() }.show()
+                        }
+                    }
+                    return@execute
                 }
                 if (!engineCachePrepared) {
                     val engineCache = File(cacheDir, "lok-engine")
@@ -275,6 +327,23 @@ class OfficeActivity : Activity() {
         }
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val location = IntArray(2)
+            if (::viewport.isInitialized) viewport.getLocationOnScreen(location)
+            touchInDocument = ::viewport.isInitialized && event.rawX >= location[0] && event.rawX < location[0] + viewport.width &&
+                event.rawY >= location[1] && event.rawY < location[1] + viewport.height
+        }
+        if (touchInDocument && ::scaleDetector.isInitialized) {
+            scaleDetector.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                wasScaling = true
+                viewport.parent.requestDisallowInterceptTouchEvent(true)
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     private fun configureUserFonts() {
         val engineFonts = File(applicationInfo.dataDir, "user/fonts")
         engineFonts.listFiles()?.filter { it.name.matches(Regex("min-user-[0-9a-f]{64}\\.ttf")) }?.forEach {
@@ -302,9 +371,14 @@ class OfficeActivity : Activity() {
                 AlertDialog.Builder(this).setTitle("문서 비밀번호")
                     .setMessage(if (retry) "비밀번호가 맞지 않습니다. 다시 입력해 주세요." else "비밀번호를 입력해 주세요.")
                     .setView(input).setCancelable(false)
-                    .setNegativeButton("취소") { _, _ -> latch.countDown(); finish() }
+                    .setNegativeButton("취소") { _, _ ->
+                        setResult(RESULT_CANCELED, Intent().putExtra("password_cancelled", true))
+                        latch.countDown()
+                        finish()
+                    }
                     .setPositiveButton("열기") { _, _ -> result.set(input.text.toString()); latch.countDown() }
                     .show()
+                input.requestFocus()
             }
         }
         try {
@@ -338,6 +412,7 @@ class OfficeActivity : Activity() {
 
     private fun showPage(index: Int, x: Int = 0, y: Int = 0) {
         if (index !in 0 until pageCount) return
+        if (index != swipeAnimationTarget) swipeAnimationTarget = -1
         if (closeSlidePanel != null) slidePanelSelection = index
         val request = renderGeneration.incrementAndGet()
         val requestedZoom = zoom
@@ -347,10 +422,6 @@ class OfficeActivity : Activity() {
             }
         }
     }
-
-    private fun toolLayout() = if (resources.configuration.screenWidthDp >= 600)
-        LinearLayout.LayoutParams((96 * resources.displayMetrics.density).toInt(), -2)
-    else LinearLayout.LayoutParams(0, -2, 1f)
 
     private fun drawPage(index: Int, requestedX: Int, requestedY: Int, requestedZoom: Float, request: Int) {
         if (closed || request != renderGeneration.get()) return
@@ -365,17 +436,14 @@ class OfficeActivity : Activity() {
         val fullHeight = if (sheet) minOf(height.toLong(), fullWidth.toLong() * 1600 / 960).toInt() else rect[3]
         val renderedWidth = maxOf(1, (fullWidth / requestedZoom).toInt())
         val availableWidth = if (viewportWidth > 0) viewportWidth else resources.displayMetrics.widthPixels
-        val availableHeight = if (viewportHeight > 0) viewportHeight else resources.displayMetrics.heightPixels
-        val renderedHeight = if (requestedZoom <= 1f) fullHeight else
-            minOf(fullHeight.toLong(), maxOf(1L, renderedWidth.toLong() * availableHeight / availableWidth)).toInt()
+        val renderedHeight = maxOf(1, (fullHeight / requestedZoom).toInt())
         val left = if (sheet) 0 else rect[0]
         val top = if (sheet) 0 else rect[1]
         val right = if (sheet) width else rect[0] + rect[2]
         val bottom = if (sheet) height else rect[1] + rect[3]
         val x = requestedX.coerceIn(left, (right - renderedWidth).coerceAtLeast(left))
         val y = requestedY.coerceIn(top, (bottom - renderedHeight).coerceAtLeast(top))
-        val pixelWidth = minOf(960L, maxOf(1L, 1600L * renderedWidth / renderedHeight)).toInt()
-        val pixelHeight = maxOf(1, (pixelWidth.toLong() * renderedHeight / renderedWidth).toInt())
+        val (pixelWidth, pixelHeight) = documentRenderSize(renderedWidth, renderedHeight, availableWidth)
         val byteCount = pixelWidth * pixelHeight * 4
         val pixels = tilePixels?.takeIf { it.capacity() >= byteCount }
             ?: ByteBuffer.allocateDirect(byteCount).also { tilePixels = it }
@@ -406,7 +474,17 @@ class OfficeActivity : Activity() {
                 tileHeight = renderedHeight
                 baseWidth = fullWidth
                 baseHeight = fullHeight
+                if (documentType == Document.DOCTYPE_SPREADSHEET && image.layoutParams.height != -2) {
+                    image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, -2)
+                }
                 image.setImageBitmap(bitmap)
+                if (index == swipeAnimationTarget) {
+                    swipeAnimationTarget = -1
+                    image.animate().cancel()
+                    image.translationX = swipeAnimationDirection * 36 * resources.displayMetrics.density
+                    image.alpha = 0.75f
+                    image.animate().translationX(0f).alpha(1f).setDuration(180).start()
+                }
                 pageLimit = when {
                     documentType == Document.DOCTYPE_SPREADSHEET -> " · 시험용: 끌어서 이동"
                     else -> " · 시험용"
@@ -416,17 +494,33 @@ class OfficeActivity : Activity() {
         }
     }
 
-    private fun setZoom(value: Float) {
+    private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null) {
         val next = value.coerceIn(1f, 4f)
         if (next == zoom) return
+        val previousZoom = zoom
         zoom = next
         if (pageCount > 0 && baseWidth > 0 && baseHeight > 0) {
             val nextWidth = maxOf(1, (baseWidth / next).toInt())
             val availableWidth = if (viewportWidth > 0) viewportWidth else resources.displayMetrics.widthPixels
             val availableHeight = if (viewportHeight > 0) viewportHeight else resources.displayMetrics.heightPixels
-            val nextHeight = if (next <= 1f) baseHeight else
-                minOf(baseHeight.toLong(), maxOf(1L, nextWidth.toLong() * availableHeight / availableWidth)).toInt()
-            showPage(pageIndex, viewportX + (tileWidth - nextWidth) / 2, viewportY + (tileHeight - nextHeight) / 2)
+            val nextHeight = maxOf(1, (baseHeight / next).toInt())
+            val oldWidth = maxOf(1, (baseWidth / previousZoom).toInt())
+            val oldHeight = maxOf(1, (baseHeight / previousZoom).toInt())
+            val location = IntArray(2)
+            image.getLocationInWindow(location)
+            val drawable = image.drawable
+            val area = if (drawable != null) {
+                android.graphics.RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat()).also {
+                    image.imageMatrix.mapRect(it)
+                    it.offset(location[0].toFloat() + image.paddingLeft, location[1].toFloat() + image.paddingTop)
+                }
+            } else android.graphics.RectF(location[0].toFloat(), location[1].toFloat(),
+                (location[0] + availableWidth).toFloat(), (location[1] + availableHeight).toFloat())
+            val fx = focusX?.let { ((it - area.left) / area.width()).coerceIn(0f, 1f) } ?: 0.5f
+            val fy = focusY?.let { ((it - area.top) / area.height()).coerceIn(0f, 1f) } ?: 0.5f
+            viewportX += ((oldWidth - nextWidth) * fx).toInt()
+            viewportY += ((oldHeight - nextHeight) * fy).toInt()
+            showPage(pageIndex, viewportX, viewportY)
             updateStatus()
         }
     }
@@ -772,13 +866,19 @@ class OfficeActivity : Activity() {
         }
     }
 
-    private fun copyAssets(path: String, destination: File) {
+    private fun copyAssets(path: String, destination: File, replace: Boolean) {
         val children = assets.list(path) ?: throw IOException("엔진 자산을 읽을 수 없습니다.")
         if (children.isNotEmpty()) {
             if (!destination.isDirectory && !destination.mkdirs()) throw IOException("엔진 폴더를 만들 수 없습니다.")
-            children.forEach { copyAssets("$path/$it", File(destination, it)) }
-        } else if (!destination.exists()) {
-            assets.open(path).use { source -> destination.outputStream().use { target -> source.copyTo(target) } }
+            children.forEach { copyAssets("$path/$it", File(destination, it), replace) }
+        } else if (replace || !destination.exists()) {
+            val temporary = File.createTempFile("asset-", ".tmp", cacheDir)
+            try {
+                assets.open(path).use { source -> temporary.outputStream().use { target -> source.copyTo(target) } }
+                if (!temporary.renameTo(destination)) throw IOException("엔진 파일을 준비할 수 없습니다.")
+            } finally {
+                if (temporary.exists()) temporary.delete()
+            }
         }
     }
 
@@ -791,6 +891,12 @@ class OfficeActivity : Activity() {
         val finishing = isFinishing
         synchronized(OfficeActivity::class.java) { activeActivities-- }
         super.onDestroy()
+        // 엔진이 문서 열기에서 멈춰 정리 작업이 실행되지 않는 경우 대비
+        if (finishing) Handler(Looper.getMainLooper()).postDelayed({
+            synchronized(OfficeActivity::class.java) {
+                if (activeActivities == 0) android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }, 500)
         worker.execute {
             closeDocument()
             if (finishing) synchronized(OfficeActivity::class.java) {

@@ -10,8 +10,8 @@ const waitFor = async pattern => {
     for (let i = 0; i < 10; i++) { const xml = screen(); if (pattern.test(xml)) return xml; await delay(500); }
     throw new Error(`화면에 ${pattern} 표시되지 않음`);
 };
-const tap = (xml, value) => {
-    const node = xml.match(new RegExp(`<node[^>]*text="${value}"[^>]*>`))?.[0];
+const tap = (xml, value, attribute = 'text') => {
+    const node = xml.match(new RegExp(`<node[^>]*${attribute}="${value}"[^>]*>`))?.[0];
     const bounds = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
     assert.ok(bounds, `${value} 항목을 찾을 수 없음`);
     run('shell', 'input', 'tap', String((+bounds[1] + +bounds[3]) / 2), String((+bounds[2] + +bounds[4]) / 2));
@@ -49,4 +49,29 @@ run('shell', 'input', 'text', 'reader-test');
 xml = screen();
 tap(xml, '열기');
 await waitFor(/LibreOffice 1 \/ 1/);
+if (extension === 'docx') {
+    run('shell', 'am', 'force-stop', 'org.minviewer.app');
+    run('shell', 'am', 'start', '-n', 'org.minviewer.app/.MainActivity');
+    xml = await waitFor(/content-desc="파일 열기"/);
+    tap(xml, '파일 열기', 'content-desc');
+    xml = await waitFor(/content-desc="Search"/);
+    tap(xml, 'Search', 'content-desc');
+    run('shell', 'input', 'text', name);
+    run('shell', 'input', 'keyevent', 'ENTER');
+    xml = await waitFor(new RegExp(`content-desc="Preview the file ${name}"`));
+    const preview = xml.match(new RegExp(`content-desc="Preview the file ${name}"[^>]*bounds="\\[(\\d+),(\\d+)\\]`));
+    assert.ok(preview);
+    run('shell', 'input', 'tap', String(+preview[1] - 40), String(+preview[2] + 60));
+    await waitFor(/문서 비밀번호/);
+    run('shell', 'input', 'text', 'reader-test');
+    tap(screen(), '열기');
+    await waitFor(/LibreOffice 1 \/ 1/);
+    run('shell', 'input', 'keyevent', 'BACK');
+    xml = await waitFor(new RegExp(`text="${name}"`));
+    tap(xml, name);
+    xml = await waitFor(/문서 비밀번호/);
+    tap(xml, '취소');
+    xml = await waitFor(/최근 문서/);
+    assert.doesNotMatch(xml, /문서를 열 수 없습니다/, '암호 취소를 접근 오류로 표시함');
+}
 console.log(`암호 ${extension}의 잘못된 비밀번호 재입력 및 열기 확인 완료`);

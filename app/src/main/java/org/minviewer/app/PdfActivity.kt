@@ -54,8 +54,8 @@ private class PdfPasswordRequired : IOException()
 class PdfActivity : Activity() {
     companion object { private var oldTemporaryFilesCleaned = false }
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, ArrayBlockingQueue(32), ThreadPoolExecutor.DiscardOldestPolicy())
-    private val cache = object : LruCache<Int, Bitmap>(16 * 1024 * 1024) {
-        override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount
+    private val cache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
     private val thumbnails = object : LruCache<Int, Bitmap>(4 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount
@@ -70,7 +70,7 @@ class PdfActivity : Activity() {
     private var temporaryFile: File? = null
     private var pageCount = 0
     private var pageIndex = 0
-    private var mode = 0
+    private var mode = 1
     private var restorePanel = false
     private var zoom = 1f
     private var searchMessage = ""
@@ -82,6 +82,12 @@ class PdfActivity : Activity() {
     private var searchQuery = ""
     private var pendingTarget: Int? = null
     private var navigationGeneration = 0
+    @Volatile private var renderGeneration = 0
+    private var touchX = 0f
+    private var touchY = 0f
+    private var multiTouch = false
+    private var touchInDocument = false
+    private lateinit var scaleDetector: ScaleGestureDetector
     @Volatile private var searchGeneration = 0
     @Volatile private var searching = false
     @Volatile private var closed = false
@@ -96,7 +102,7 @@ class PdfActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
-        mode = savedInstanceState?.getInt("mode") ?: intent.getIntExtra("restore_mode", 0)
+        mode = savedInstanceState?.getInt("mode") ?: intent.getIntExtra("restore_mode", 1)
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
         zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         nextSearch = Button(this).apply {
@@ -108,12 +114,12 @@ class PdfActivity : Activity() {
             listOf("연속 보기" to { setMode(0) }, "한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) },
                 "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }))
         status = controls.status
-        val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                setZoom(zoom * detector.scaleFactor)
+                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), detector.focusX, detector.focusY)
                 return true
             }
-        })
+        }).apply { isQuickScaleEnabled = false }
         list = object : ListView(this) {
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
                 val viewport = if (::horizontal.isInitialized && horizontal.width > 0) horizontal.width else resources.displayMetrics.widthPixels
@@ -122,11 +128,6 @@ class PdfActivity : Activity() {
             }
         }.apply {
             dividerHeight = (8 * resources.displayMetrics.density).toInt()
-            setOnTouchListener { view, event ->
-                scaleDetector.onTouchEvent(event)
-                if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) view.parent.requestDisallowInterceptTouchEvent(true)
-                scaleDetector.isInProgress
-            }
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView?, state: Int) {
                     if (state == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
@@ -147,6 +148,12 @@ class PdfActivity : Activity() {
                 }
             })
         }
+        list.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) {
+                renderGeneration++
+                list.post { if (!closed) (list.adapter as? BaseAdapter)?.notifyDataSetChanged() }
+            }
+        }
         horizontal = HorizontalScrollView(this).apply { addView(list) }
         horizontal.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeDocument() }
         contentRow = LinearLayout(this).apply {
@@ -166,6 +173,39 @@ class PdfActivity : Activity() {
         })
         val uri = intent.data ?: run { status.text = "PDF 오류: 파일이 없습니다."; return }
         openDocument(uri, null)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val location = IntArray(2)
+            if (::horizontal.isInitialized) horizontal.getLocationOnScreen(location)
+            touchInDocument = ::horizontal.isInitialized && event.rawX >= location[0] && event.rawX < location[0] + horizontal.width &&
+                event.rawY >= location[1] && event.rawY < location[1] + horizontal.height
+        }
+        if (touchInDocument && ::scaleDetector.isInitialized) {
+            scaleDetector.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) list.parent.requestDisallowInterceptTouchEvent(true)
+        }
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { touchX = event.rawX; touchY = event.rawY; multiTouch = false }
+            MotionEvent.ACTION_POINTER_DOWN -> multiTouch = true
+            MotionEvent.ACTION_UP -> {
+                val dx = event.rawX - touchX
+                val dy = event.rawY - touchY
+                val location = IntArray(2)
+                if (::horizontal.isInitialized) horizontal.getLocationOnScreen(location)
+                val inDocument = ::horizontal.isInitialized && touchX >= location[0] && touchX < location[0] + horizontal.width &&
+                    touchY >= location[1] && touchY < location[1] + horizontal.height
+                if (inDocument && !multiTouch && zoom <= 1f &&
+                    kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
+                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
+                    super.dispatchTouchEvent(event)
+                    movePage(if (dx < 0) 1 else -1)
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     private fun createRenderer(descriptor: ParcelFileDescriptor, password: String?): PdfRenderer = try {
@@ -277,10 +317,6 @@ class PdfActivity : Activity() {
             updateStatus()
         }
     }
-
-    private fun toolLayout() = if (resources.configuration.screenWidthDp >= 600)
-        LinearLayout.LayoutParams((96 * resources.displayMetrics.density).toInt(), -2)
-    else LinearLayout.LayoutParams(0, -2, 1f)
 
     private fun movePage(direction: Int) {
         val index = if (mode != 2) pageIndex + direction else if (direction > 0) {
@@ -400,22 +436,39 @@ class PdfActivity : Activity() {
     private fun resizeDocument() {
         val width = (horizontal.width * zoom).toInt().coerceAtLeast(1)
         if (list.layoutParams.width != width) {
+            renderGeneration++
             list.layoutParams = android.widget.FrameLayout.LayoutParams(width, -1)
             (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
         }
     }
 
-    private fun setZoom(value: Float) {
-        zoom = value.coerceIn(1f, 4f)
+    private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null) {
+        val next = value.coerceIn(1f, 4f)
+        if (next == zoom) return
+        val ratio = next / zoom
+        val location = IntArray(2)
+        horizontal.getLocationInWindow(location)
+        val x = focusX?.minus(location[0]) ?: horizontal.width / 2f
+        val y = focusY?.minus(location[1]) ?: horizontal.height / 2f
+        val left = ((horizontal.scrollX + x) * ratio - x).toInt()
+        val first = list.firstVisiblePosition
+        val top = list.getChildAt(0)?.top ?: 0
+        val newTop = (y - (y - top) * ratio).toInt()
+        zoom = next
         resizeDocument()
+        list.setSelectionFromTop(first, newTop)
+        horizontal.post { horizontal.scrollTo(left, 0) }
         if (pageCount > 0) updateStatus()
     }
 
-    private fun drawPage(index: Int, targetWidth: Int = 960, maxHeight: Int = 2048): Bitmap {
+    private fun drawPage(index: Int, targetWidth: Int = 960, thumbnail: Boolean = false): Bitmap {
         val page = (renderer ?: throw IOException("문서가 닫혔습니다.")).openPage(index)
         return page.use {
-            val scale = minOf(targetWidth.toFloat() / it.width, maxHeight.toFloat() / it.height)
-            val result = Bitmap.createBitmap(maxOf(1, (it.width * scale).toInt()), maxOf(1, (it.height * scale).toInt()), Bitmap.Config.ARGB_8888)
+            val (width, height) = if (thumbnail) {
+                val scale = minOf(targetWidth.toFloat() / it.width, 320f / it.height)
+                maxOf(1, (it.width * scale).toInt()) to maxOf(1, (it.height * scale).toInt())
+            } else documentRenderSize(it.width, it.height, targetWidth)
+            val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             result.eraseColor(Color.WHITE)
             it.render(result, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             result
@@ -470,7 +523,7 @@ class PdfActivity : Activity() {
                     if (thumbnails.get(position) == null) worker.execute {
                         if (!closed) {
                             try {
-                                val bitmap = drawPage(position, 160, 320)
+                                val bitmap = drawPage(position, 160, thumbnail = true)
                                 if (!closed) runOnUiThread {
                                     if (!closed) {
                                         thumbnails.put(position, bitmap)
@@ -528,6 +581,9 @@ class PdfActivity : Activity() {
             repeat(count) { offset ->
                 val index = page + offset
                 val width = (parent.width / count).coerceAtLeast(1)
+                val renderWidth = (((width + 127) / 128) * 128).coerceAtMost(2560)
+                val key = "$index:$renderWidth"
+                val generation = renderGeneration
                 val image = object : ImageView(this@PdfActivity) {
                     override fun onDraw(canvas: Canvas) {
                         super.onDraw(canvas)
@@ -544,12 +600,14 @@ class PdfActivity : Activity() {
                 }.apply {
                     contentDescription = "PDF ${index + 1}쪽"
                     scaleType = ImageView.ScaleType.FIT_CENTER
-                    tag = index
+                    tag = key
                     layoutParams = LinearLayout.LayoutParams(0, (width * 1.4f).toInt().coerceAtLeast(1), 1f)
                 }
                 row.addView(image)
                 fun display(bitmap: Bitmap) {
-                    image.layoutParams = LinearLayout.LayoutParams(0, (width.toLong() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), 1f)
+                    val imageHeight = (width.toLong() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
+                    val height = if (mode == 1 && list.height > 0) minOf(imageHeight, (list.height * zoom).toInt()) else imageHeight
+                    image.layoutParams = LinearLayout.LayoutParams(0, height, 1f)
                     image.setImageBitmap(bitmap)
                     if (pendingTarget == index) {
                         val generation = navigationGeneration
@@ -557,15 +615,15 @@ class PdfActivity : Activity() {
                         list.post { if (!closed && generation == navigationGeneration) list.setSelectionFromTop(rowForPage(index), 0) }
                     }
                 }
-                val cached = cache.get(index)
+                val cached = cache.get(key)
                 if (cached != null) display(cached) else if (!searching) worker.execute {
-                    if (!closed) {
+                    if (!closed && generation == renderGeneration) {
                         try {
-                            val bitmap = drawPage(index)
+                            val bitmap = drawPage(index, renderWidth)
                             if (!closed) runOnUiThread {
-                                if (!closed) {
-                                    cache.put(index, bitmap)
-                                    if (image.parent === row && image.tag == index) display(bitmap)
+                                if (!closed && generation == renderGeneration) {
+                                    cache.put(key, bitmap)
+                                    if (image.parent === row && image.tag == key) display(bitmap)
                                 }
                             }
                         } catch (error: Exception) {

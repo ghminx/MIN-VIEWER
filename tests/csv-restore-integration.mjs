@@ -52,12 +52,24 @@ xml = await waitFor(/text="CP949"/);
 tap(xml, 'text', 'CP949');
 xml = await waitFor(/1-100행 · CP949/);
 tap(xml, 'text', '다음');
-await waitFor(/101-200행 · CP949/);
+xml = await waitFor(/101-200행 · CP949/);
+let zoom;
+if (process.env.PINCH_TEST === '1') {
+    const list = xml.match(/class="android.widget.ListView"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+    assert.ok(list, 'CSV 목록을 찾을 수 없음');
+    const x = String((+list[1] + +list[3]) / 2);
+    const y = String((+list[2] + +list[4]) / 2);
+    run('shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, '120', '400');
+    xml = await waitFor(/101-200행 · CP949 · (\d+)%/);
+    zoom = Number(xml.match(/101-200행 · CP949 · (\d+)%/)[1]);
+    assert.ok(zoom > 110, `CSV 확대 실패: ${zoom}%`);
+}
 run('shell', 'am', 'force-stop', 'org.minviewer.app');
 run('shell', 'am', 'start', '-n', 'org.minviewer.app/.MainActivity');
 xml = await waitFor(new RegExp(`text="${name}"`));
 tap(xml, 'text', name);
-await waitFor(/101-200행 · CP949/);
+xml = await waitFor(/101-200행 · CP949/);
+if (zoom) assert.match(xml, new RegExp(`101-200행 · CP949 · ${zoom}%`), 'CSV 확대 배율 복원 실패');
 run('shell', 'input', 'keyevent', 'BACK');
 await waitFor(new RegExp(`text="${name}"`));
 run('shell', 'mv', `/sdcard/Download/${name}`, `/sdcard/Download/${name}.test-moved`);

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.MotionEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -37,8 +38,6 @@ class MainActivity : Activity() {
     private var browser: WebView? = null
     private lateinit var emptyMessage: TextView
     private lateinit var indicator: TextView
-    private lateinit var officeTrial: Button
-    private lateinit var legacyTrial: Button
     private lateinit var hwpSearch: Button
     private lateinit var hwpNextSearch: Button
     private lateinit var hwpModes: LinearLayout
@@ -52,16 +51,19 @@ class MainActivity : Activity() {
     private var pendingWebDocument = false
     private var selectedName = ""
     private var resumeAfterOffice = false
-    private var waitingForFallback = false
     private var autoOpenOffice = false
     private var incomingMimeType: String? = null
     private var loadGeneration = 0
-    private var hwpMode = "continuous"
+    private var hwpMode = "single"
     private var hwpEquationWarning = false
     private var hwpChartWarning = false
     private var hwpZoom = 1f
     private var hwpSearchMessage = ""
     private var pendingHwpZoomRestore = false
+    private var swipeX = 0f
+    private var swipeY = 0f
+    private var swipeDocument = false
+    private var swipeMultiTouch = false
     @Volatile private var documentSource: DocumentSource? = null
 
     private data class DocumentSource(val token: String, val uri: Uri)
@@ -74,16 +76,14 @@ class MainActivity : Activity() {
         documentUri = savedInstanceState?.getString("uri")?.let(Uri::parse)
         selectedName = savedInstanceState?.getString("name") ?: ""
         resumeAfterOffice = savedInstanceState?.getBoolean("resumeAfterOffice") ?: false
-        waitingForFallback = savedInstanceState?.getBoolean("waitingForFallback") ?: false
         pageIndex = if (savedInstanceState?.getBoolean("mobileWord") == true) savedInstanceState.getInt("originalWordPage")
             else savedInstanceState?.getInt("page") ?: 0
         listVisible = savedInstanceState?.getBoolean("list") ?: false
-        hwpMode = savedInstanceState?.getString("hwpMode")?.takeIf { it in listOf("continuous", "single", "spread") } ?: "continuous"
+        hwpMode = savedInstanceState?.getString("hwpMode")?.takeIf { it in listOf("continuous", "single", "spread") } ?: "single"
         hwpZoom = savedInstanceState?.getFloat("hwpZoom") ?: 1f
         recent = RecentDocuments(this)
         buildScreen()
         if (savedInstanceState == null) receiveDocument(intent)
-        else if (waitingForFallback) showEngineChoice()
         else if (!resumeAfterOffice) loadDocument()
     }
 
@@ -124,9 +124,8 @@ class MainActivity : Activity() {
         releaseBrowser()
         incomingMimeType = incoming.type
         pageIndex = 0
-        hwpMode = "continuous"
+        hwpMode = "single"
         hwpZoom = 1f
-        waitingForFallback = false
         resumeAfterOffice = false
         autoOpenOffice = true
         loadDocument()
@@ -161,34 +160,6 @@ class MainActivity : Activity() {
                 }, toolLayout())
             }
         }
-        officeTrial = button("LibreOffice 시험") {
-            documentUri?.let { uri ->
-                releaseBrowser()
-                documentSource = null
-                pageCount = 0
-                list.adapter = null
-                indicator.text = "LibreOffice 시험 중"
-                waitingForFallback = false
-                legacyTrial.visibility = View.GONE
-                resumeAfterOffice = true
-                @Suppress("DEPRECATION")
-                val saved = recent.all().firstOrNull { it.uri == uri }
-                startActivityForResult(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", selectedName)
-                    .putExtra("restore_page", if (saved?.mode == "mobile-word") saved.x else saved?.page ?: 0)
-                    .putExtra("restore_zoom", if (saved?.mode == "mobile-word") 1f else saved?.zoom ?: 1f)
-                    .putExtra("restore_x", if (saved?.mode == "mobile-word") 0 else saved?.x ?: 0)
-                    .putExtra("restore_y", if (saved?.mode == "mobile-word") 0 else saved?.y ?: 0)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 3)
-            }
-        }.apply { visibility = View.GONE }
-        container.addView(officeTrial)
-        legacyTrial = button("경량 엔진 보기") {
-            waitingForFallback = false
-            legacyTrial.visibility = View.GONE
-            loadDocument()
-        }.apply { visibility = View.GONE }
-        container.addView(legacyTrial)
-
         content = LinearLayout(this)
         list = ListView(this).apply {
             setOnItemClickListener { _, _, position, _ ->
@@ -207,9 +178,8 @@ class MainActivity : Activity() {
             documentUri = item.uri
             incomingMimeType = null
             pageIndex = if (item.mode == "mobile-word") item.x else item.page
-            hwpMode = item.mode.takeIf { it in listOf("continuous", "single", "spread") } ?: "continuous"
+            hwpMode = item.mode.takeIf { it in listOf("continuous", "single", "spread") } ?: "single"
             hwpZoom = item.zoom
-            waitingForFallback = false
             autoOpenOffice = true
             loadDocument()
         }
@@ -217,7 +187,7 @@ class MainActivity : Activity() {
             addView(container)
             addView(home)
         })
-        if (documentUri != null || waitingForFallback || resumeAfterOffice) home.visibility = View.GONE
+        if (documentUri != null || resumeAfterOffice) home.visibility = View.GONE
         else container.visibility = View.GONE
         updateLayout()
     }
@@ -235,7 +205,6 @@ class MainActivity : Activity() {
         viewerControls.setDocumentNotice("")
         documentUri = null
         documentSource = null
-        waitingForFallback = false
         resumeAfterOffice = false
         releaseBrowser()
         home.refresh()
@@ -313,6 +282,12 @@ class MainActivity : Activity() {
                     }
                 }
             }
+            addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                if ((right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) &&
+                    ready && pageCount > 0 && hwpMode == "single") {
+                    post { if (generation == browserGeneration && !isDestroyed) showPage(pageIndex) }
+                }
+            }
         }
         emptyMessage.visibility = View.GONE
         browser?.let { content.addView(it) }
@@ -331,6 +306,35 @@ class MainActivity : Activity() {
         }
         browser = null
         emptyMessage.visibility = View.VISIBLE
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeX = event.rawX
+                swipeY = event.rawY
+                swipeMultiTouch = false
+                val view = browser
+                val location = IntArray(2)
+                view?.getLocationOnScreen(location)
+                swipeDocument = view != null && view.visibility == View.VISIBLE &&
+                    swipeX >= location[0] && swipeX < location[0] + view.width &&
+                    swipeY >= location[1] && swipeY < location[1] + view.height
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> swipeMultiTouch = true
+            MotionEvent.ACTION_UP -> {
+                val dx = event.rawX - swipeX
+                val dy = event.rawY - swipeY
+                if (swipeDocument && !swipeMultiTouch && hwpMode == "single" && hwpZoom <= 1.01f &&
+                    kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
+                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
+                    super.dispatchTouchEvent(event)
+                    movePage(if (dx < 0) 1 else -1)
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
@@ -373,6 +377,13 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 2 || requestCode == 3) {
+            if (requestCode == 3 && (data?.getBooleanExtra("password_cancelled", false) == true ||
+                    data?.getBooleanExtra("unsupported_storage", false) == true)) {
+                openingRecent = false
+                resumeAfterOffice = false
+                showHome()
+                return
+            }
             if (resultCode == RESULT_OK) data?.data?.let {
                 recent.add(it, data.getStringExtra("name") ?: selectedName)
                 if (data.hasExtra("view_page")) recent.updateView(it, data.getIntExtra("view_page", 0),
@@ -381,7 +392,8 @@ class MainActivity : Activity() {
             }
             val failedRecent = openingRecent && resultCode != RESULT_OK
             openingRecent = false
-            if (requestCode == 2) showHome()
+            if (requestCode == 3) resumeAfterOffice = false
+            showHome()
             if (failedRecent) {
                 AlertDialog.Builder(this).setMessage("문서를 열 수 없습니다. 파일을 다시 선택해 주세요.")
                     .setNegativeButton("취소", null).setPositiveButton("다시 선택") { _, _ -> showHome(); pickDocument() }.show()
@@ -399,9 +411,8 @@ class MainActivity : Activity() {
         openingRecent = false
         incomingMimeType = null
         pageIndex = 0
-        hwpMode = "continuous"
+        hwpMode = "single"
         hwpZoom = 1f
-        waitingForFallback = false
         autoOpenOffice = true
         loadDocument()
     }
@@ -427,8 +438,6 @@ class MainActivity : Activity() {
         hwpSearch.visibility = View.GONE
         hwpNextSearch.visibility = View.GONE
         hwpModes.visibility = View.GONE
-        officeTrial.visibility = View.GONE
-        legacyTrial.visibility = View.GONE
         if (ready) browser?.evaluateJavascript("window.resetDocument()", null)
         worker.execute {
             try {
@@ -456,10 +465,6 @@ class MainActivity : Activity() {
                         val saved = if (openingRecent) recent.all().firstOrNull { it.uri == uri } else null
                         val extension = name.substringAfterLast('.', "").lowercase()
                         val isOffice = extension in listOf("docx", "xlsx", "pptx")
-                        if (isOffice) {
-                            officeTrial.text = if (extension == "docx") "원본 페이지 보기" else "LibreOffice 시험"
-                            officeTrial.visibility = View.VISIBLE
-                        }
                         if (extension == "csv" && launchOffice) {
                             releaseBrowser()
                             documentSource = null
@@ -468,6 +473,7 @@ class MainActivity : Activity() {
                             @Suppress("DEPRECATION")
                             startActivityForResult(Intent(this, CsvActivity::class.java).setData(uri).putExtra("name", name)
                                 .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_encoding", saved?.mode ?: "")
+                                .putExtra("restore_zoom", saved?.zoom ?: 1f)
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
                         } else if (extension == "pdf" && launchOffice) {
                             releaseBrowser()
@@ -476,12 +482,12 @@ class MainActivity : Activity() {
                             indicator.text = "PDF 보기"
                             @Suppress("DEPRECATION")
                             startActivityForResult(Intent(this, PdfActivity::class.java).setData(uri).putExtra("name", name)
-                                .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_mode", saved?.mode?.toIntOrNull() ?: 0)
+                                .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_mode", saved?.mode?.toIntOrNull() ?: 1)
                                 .putExtra("restore_zoom", saved?.zoom ?: 1f).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
                         } else if (isOffice && (launchOffice || extension == "docx")) {
                             releaseBrowser()
                             documentSource = null
-                            indicator.text = "LibreOffice 시험 중"
+                            indicator.text = "문서를 불러오는 중"
                             resumeAfterOffice = true
                             @Suppress("DEPRECATION")
                             startActivityForResult(Intent(this, OfficeActivity::class.java).setData(uri).putExtra("name", name)
@@ -579,6 +585,8 @@ class MainActivity : Activity() {
                 hwpNextSearch.visibility = if (canNext) View.VISIBLE else View.GONE
                 hwpNextSearch.text = "다음 $number/$total"
                 val target = result.getInt("page")
+                if (target !in 0 until pageCount) throw org.json.JSONException("검색 결과 페이지가 범위를 벗어났습니다.")
+                pageIndex = target
                 browser?.evaluateJavascript("window.showHwpSearchResult($target)", null)
                 showHwpPosition()
                 val message = when {
@@ -605,8 +613,7 @@ class MainActivity : Activity() {
                 ready = true
                 val fonts = org.json.JSONArray(UserFonts(this@MainActivity).all().map { it.json() })
                 browser?.evaluateJavascript("window.setUserFonts($fonts)", null)
-                if (waitingForFallback || resumeAfterOffice) showEngineChoice()
-                else if (pendingWebDocument) loadDocument()
+                if (pendingWebDocument) loadDocument()
             }
         }
         @JavascriptInterface fun onOpened(count: Int, generation: Int) = runOnUiThread {
@@ -684,7 +691,7 @@ class MainActivity : Activity() {
     private fun updateHwpNotice() {
         val message = listOfNotNull(
             if (hwpEquationWarning) "일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다." else null,
-            if (hwpChartWarning) "차트의 값이나 모양이 원본과 다를 수 있습니다." else null,
+            if (hwpChartWarning) "차트 값·색상·모양이 원본과 다를 수 있습니다." else null,
         ).joinToString(" ").let { if (it.isEmpty()) it else "$it 원본 문서와 비교해 주세요." }
         viewerControls.setDocumentNotice(message)
     }
@@ -695,27 +702,9 @@ class MainActivity : Activity() {
         outState.putInt("page", pageIndex)
         outState.putBoolean("list", listVisible)
         outState.putBoolean("resumeAfterOffice", resumeAfterOffice)
-        outState.putBoolean("waitingForFallback", waitingForFallback)
         outState.putString("hwpMode", hwpMode)
         outState.putFloat("hwpZoom", hwpZoom)
         super.onSaveInstanceState(outState)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (resumeAfterOffice) {
-            resumeAfterOffice = false
-            waitingForFallback = true
-            showEngineChoice()
-        }
-    }
-
-    private fun showEngineChoice() {
-        val word = selectedName.endsWith(".docx", true)
-        indicator.text = if (word) "원본 페이지 보기" else "문서 보기 선택"
-        officeTrial.visibility = View.VISIBLE
-        legacyTrial.visibility = if (word) View.GONE else View.VISIBLE
-        if (ready && !word) browser?.evaluateJavascript("window.showEngineChoice()", null)
     }
 
     override fun onDestroy() {

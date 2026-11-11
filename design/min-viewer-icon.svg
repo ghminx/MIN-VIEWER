@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512" viewBox="0 0 512 512">
+  <title>MIN VIEWER app icon</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path id="Navy_app_background" data-name="Navy app background" d="M105 0 L407 0 C464.99 0 512 47.01 512 105 L512 407 C512 464.99 464.99 512 407 512 L105 512 C47.01 512 0 464.99 0 407 L0 105 C0 47.01 47.01 0 105 0 Z" fill="#192e4d"/>
+    <path id="M_upper" data-name="M upper" d="M66 192 L90 192 L148 245 L206 192 L230 192 L230 245 L188 245 L148 278 L108 245 L66 245 Z" fill="#ffffff"/>
+    <path id="M_legs" data-name="M legs" d="M66 261 L108 261 L108 326 L66 326 Z M188 261 L230 261 L230 326 L188 326 Z" fill="#ffffff"/>
+    <path id="I" d="M249 192 L285 192 L285 245 L249 245 Z M249 261 L285 261 L285 326 L249 326 Z" fill="#ffffff"/>
+    <path id="N" d="M304 192 L344 192 L404 245 L363 245 L344 228 L344 245 L304 245 Z M403 192 L443 192 L443 245 L403 245 Z M304 261 L344 261 L344 326 L304 326 Z M363 261 L403 261 L443 296 L443 326 L403 326 L363 291 Z" fill="#ffffff"/>
+  </g>
+</svg>
