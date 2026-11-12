@@ -127,6 +127,7 @@ class PdfActivity : Activity() {
                 super.onMeasure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), heightMeasureSpec)
             }
         }.apply {
+            setBackgroundColor(if (ThemePreferences.isDark(this@PdfActivity)) Color.rgb(41, 47, 51) else Color.rgb(232, 235, 239))
             dividerHeight = (8 * resources.displayMetrics.density).toInt()
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView?, state: Int) {
@@ -575,6 +576,8 @@ class PdfActivity : Activity() {
             val page = getItem(position)
             val row = (recycled as? LinearLayout ?: LinearLayout(this@PdfActivity)).apply {
                 orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                minimumHeight = if (mode == 1 && zoom <= 1f) list.height else 0
                 removeAllViews()
             }
             val count = if (mode == 2 && position > 0 && page + 1 < pageCount) 2 else 1

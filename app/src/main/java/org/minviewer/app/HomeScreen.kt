@@ -30,9 +30,6 @@ class HomeScreen(
     private val secondary = if (dark) Color.rgb(180, 190, 203) else Color.rgb(95, 105, 119)
     private val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val entries = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-    private val clear = TextView(activity)
-    private var narrowWindow = false
-    private var hasRecent = false
 
     init {
         setBackgroundColor(if (dark) Color.rgb(25, 29, 36) else Color.rgb(249, 248, 246))
@@ -42,7 +39,9 @@ class HomeScreen(
             insets
         }
         addView(body, LayoutParams(-1, -1))
-        body.addView(LogoView(activity), LinearLayout.LayoutParams(-1, dp(76)))
+        val logoBar = FrameLayout(activity)
+        logoBar.addView(LogoView(activity), LayoutParams(-1, -1))
+        body.addView(logoBar, LinearLayout.LayoutParams(-1, dp(76)))
         val centered = FrameLayout(activity)
         body.addView(centered, LinearLayout.LayoutParams(-1, 0, 1f))
         val column = LinearLayout(activity).apply {
@@ -65,34 +64,21 @@ class HomeScreen(
             }
             if (view.width > 0) {
                 val compact = view.width < dp(240)
-                val narrow = view.width < dp(320)
                 if (compactWindow != compact) {
                     compactWindow = compact
                     val margin = if (compact) 12 else 20
                     column.setPadding(dp(margin), dp(20), dp(margin), 0)
                     headerTitle.textSize = if (compact) 16f else 20f
                 }
-                if (narrowWindow != narrow) {
-                    narrowWindow = narrow
-                    clear.visibility = if (hasRecent && !narrowWindow) View.VISIBLE else View.GONE
-                }
             }
         }
         val header = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
-        clear.apply {
-            text = "전체 삭제"
-            textSize = 14f
-            setTextColor(primaryTextColor)
-            setPadding(dp(12), dp(14), dp(12), dp(14))
-            setOnClickListener { confirmClear() }
-        }
-        header.addView(clear)
-        header.addView(TextView(activity).apply {
-            text = "⚙"
-            textSize = 21f
+        logoBar.addView(TextView(activity).apply {
+            text = "⋮"
+            textSize = 24f
             gravity = Gravity.CENTER
-            setTextColor(primaryTextColor)
+            setTextColor(Color.WHITE)
             contentDescription = "화면 설정"
             setOnClickListener {
                 AlertDialog.Builder(activity).setTitle("설정").setItems(arrayOf("화면 테마", "글꼴 관리", "최근 문서 전체 삭제")) { _, index ->
@@ -106,14 +92,14 @@ class HomeScreen(
                     else confirmClear()
                 }.show()
             }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }, LayoutParams(dp(48), dp(48), Gravity.END or Gravity.CENTER_VERTICAL))
         header.addView(TextView(activity).apply {
             text = "+"
             textSize = 28f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             contentDescription = "파일 열기"
-            background = rounded(navy, 10f)
+            background = rounded(navy, 24f)
             setOnClickListener { openPicker() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         column.addView(header)
@@ -126,8 +112,6 @@ class HomeScreen(
     fun refresh() {
         entries.removeAllViews()
         val items = recent.all()
-        hasRecent = items.isNotEmpty()
-        clear.visibility = if (hasRecent && !narrowWindow) View.VISIBLE else View.GONE
         if (items.isEmpty()) {
             entries.addView(TextView(activity).apply {
                 text = "최근에 연 문서가 없습니다\n\n+ 버튼을 눌러 문서를 열어 보세요"
@@ -140,8 +124,9 @@ class HomeScreen(
         items.forEach { item ->
             val row = LinearLayout(activity).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(8), 0, dp(8))
-                minimumHeight = dp(72)
+                setPadding(dp(12), dp(8), dp(4), dp(8))
+                minimumHeight = dp(76)
+                background = rounded(if (dark) Color.rgb(37, 46, 56) else Color.WHITE, 12f)
                 setOnClickListener { openRecent(item) }
             }
             val extension = item.name.substringAfterLast('.', "FILE").uppercase().take(4)
@@ -151,7 +136,14 @@ class HomeScreen(
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setTextColor(Color.WHITE)
-                background = rounded(navy, 6f)
+                val color = when (extension) {
+                    "PDF" -> Color.rgb(211, 52, 61)
+                    "HWP", "HWPX", "DOC", "DOCX" -> Color.rgb(48, 105, 198)
+                    "XLS", "XLSX", "CSV" -> Color.rgb(31, 130, 93)
+                    "PPT", "PPTX" -> Color.rgb(226, 111, 40)
+                    else -> navy
+                }
+                background = rounded(color, 6f)
             }, LinearLayout.LayoutParams(dp(46), dp(46)))
             val details = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -183,8 +175,7 @@ class HomeScreen(
                         .setNegativeButton("취소", null).setPositiveButton("삭제") { _, _ -> recent.remove(item.uri); refresh() }.show()
                 }
             }, LinearLayout.LayoutParams(dp(48), dp(48)))
-            entries.addView(row)
-            entries.addView(View(activity).apply { setBackgroundColor(if (dark) Color.rgb(68, 75, 85) else Color.rgb(225, 227, 230)) }, LinearLayout.LayoutParams(-1, dp(1)))
+            entries.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         }
     }
 

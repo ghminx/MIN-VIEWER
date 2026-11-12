@@ -60,6 +60,7 @@ class OfficeActivity : Activity() {
     private lateinit var sheetRightHint: TextView
     private lateinit var contentRow: LinearLayout
     private var closeSlidePanel: (() -> Unit)? = null
+    private var slidePanelGrid: GridView? = null
     private var slidePanelSelection: Int? = null
     private var restoreSlidePanel = false
     private var slidePanelAnimator: ValueAnimator? = null
@@ -174,6 +175,7 @@ class OfficeActivity : Activity() {
         }
         viewport = ScrollView(this).apply {
             isFillViewport = true
+            setBackgroundColor(if (ThemePreferences.isDark(this@OfficeActivity)) Color.rgb(41, 47, 51) else Color.rgb(232, 235, 239))
             addView(image, android.widget.FrameLayout.LayoutParams(-1, -1))
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
                 val width = right - left
@@ -471,8 +473,10 @@ class OfficeActivity : Activity() {
         }
         if (!closed) runOnUiThread {
             if (!closed && request == renderGeneration.get()) {
+                val previousPage = pageIndex
                 pageIndex = index
                 if (closeSlidePanel != null) slidePanelSelection = index
+                if (previousPage != index) slidePanelGrid?.invalidateViews()
                 viewportX = x
                 viewportY = y
                 tileWidth = renderedWidth
@@ -571,20 +575,30 @@ class OfficeActivity : Activity() {
             override fun getItem(position: Int) = position
             override fun getItemId(position: Int) = position.toLong()
             override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
+                val current = if (wide) slidePanelSelection ?: pageIndex else selected
                 val item = (recycled as? LinearLayout ?: LinearLayout(this@OfficeActivity)).apply {
                     orientation = LinearLayout.VERTICAL
-                    contentDescription = "미리보기 ${position + 1}번 슬라이드"
+                    contentDescription = "미리보기 ${position + 1}번 슬라이드" + if (position == current) ", 선택됨" else ""
+                    setBackgroundColor(if (position == current) Color.rgb(214, 230, 250) else Color.TRANSPARENT)
                     removeAllViews()
                     layoutParams = AbsListView.LayoutParams(-1, ((if (wide) 160 else 116) * resources.displayMetrics.density).toInt())
                 }
                 item.addView(ImageView(this@OfficeActivity).apply {
-                    setBackgroundColor(Color.LTGRAY)
+                    if (position == current) {
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(Color.WHITE)
+                            setStroke((3 * resources.displayMetrics.density).toInt().coerceAtLeast(1), Color.rgb(140, 191, 245))
+                        }
+                        val inset = (3 * resources.displayMetrics.density).toInt()
+                        setPadding(inset, inset, inset, inset)
+                    } else setBackgroundColor(Color.LTGRAY)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setImageBitmap(cache.get(position))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(-1, 0, 1f))
                 item.addView(TextView(this@OfficeActivity).apply {
                     text = if (position in failed) "미리보기 실패" else "${position + 1}번"
+                    if (position == current) setTextColor(Color.rgb(25, 45, 77))
                     gravity = android.view.Gravity.CENTER
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 })
@@ -644,6 +658,7 @@ class OfficeActivity : Activity() {
             val finishClose = {
                 cache.evictAll()
                 if (grid.parent === contentRow) contentRow.removeView(grid)
+                slidePanelGrid = null
                 closeSlidePanel = null
                 slidePanelSelection = null
                 if (!closed) {
@@ -658,10 +673,11 @@ class OfficeActivity : Activity() {
         }
         if (wide) {
             closeSlidePanel = closeList
+            slidePanelGrid = grid
             slidePanelSelection = pageIndex
             val width = (240 * resources.displayMetrics.density).toInt()
             contentRow.addView(grid, 0, LinearLayout.LayoutParams(0, -1))
-            grid.setOnItemClickListener { _, _, position, _ -> selected = position; showPage(position) }
+            grid.setOnItemClickListener { _, _, position, _ -> selected = position; showPage(position); grid.invalidateViews() }
             animateSlidePanel(grid, 0, width) {
                 if (!closed && active.get()) showPage(pageIndex, viewportX, viewportY)
             }

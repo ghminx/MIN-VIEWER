@@ -52,6 +52,7 @@ try {
     tap(xml, 'content-desc', '미리보기 2번 슬라이드');
     xml = await waitFor(/LibreOffice 2 \/ 3/);
     assert.match(xml, /content-desc="슬라이드 목록"/);
+    xml = await waitFor(/content-desc="미리보기 2번 슬라이드, 선택됨"/);
     tap(xml, 'content-desc', '목록');
     await delay(1000);
     xml = screen();

@@ -42,6 +42,8 @@ window.resetDocument = () => {
     hwpHighlights = [];
     page.style.display = '';
     page.style.background = '';
+    page.style.minHeight = '';
+    page.style.alignItems = '';
     pendingFetch?.abort();
     pendingFetch = undefined;
     if (documentHandle) documentHandle.free();
@@ -91,6 +93,8 @@ window.setHwpMode = (mode, index) => {
     hwpMode = mode;
     page.style.display = '';
     page.style.background = '';
+    page.style.minHeight = '';
+    page.style.alignItems = '';
     if (mode === 'single') {
         window.showPage(index);
         return;
@@ -298,13 +302,18 @@ window.showPage = index => {
         }
         const frame = hwpFrame(index);
         const info = JSON.parse(documentHandle.getPageInfo(index));
+        status.textContent = '';
         if (info.width > 0 && info.height > 0) {
-            const availableHeight = Math.max(1, window.innerHeight - status.offsetHeight - 36);
+            const availableHeight = Math.max(1, window.innerHeight - 24);
             const width = Math.min(page.clientWidth, availableHeight * info.width / info.height);
             frame.style.width = `${width}px`;
             frame.style.height = `${Math.ceil(width * info.height / info.width)}px`;
             frame.style.margin = 'auto';
         }
+        page.style.display = 'flex';
+        page.style.alignItems = 'center';
+        page.style.minHeight = 'calc(100vh - 24px)';
+        page.style.background = 'transparent';
         page.replaceChildren(frame);
         status.textContent = '';
         window.Android.onPageShown(index, activeGeneration);

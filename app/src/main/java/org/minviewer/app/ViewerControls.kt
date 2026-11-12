@@ -3,6 +3,11 @@ package org.minviewer.app
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.ColorFilter
+import android.graphics.drawable.Drawable
 import android.text.TextUtils
 import android.text.Editable
 import android.text.TextWatcher
@@ -112,10 +117,48 @@ class ViewerControls(
         textSize = if (label.length > 1) 13f else 23f
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
+        if (description in setOf("뒤로", "검색", "이전", "다음", "축소", "확대")) {
+            background = ToolIcon(description)
+            setTextColor(Color.TRANSPARENT)
+        }
         minimumWidth = dp(48)
         minimumHeight = dp(48)
         setOnClickListener { click() }
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private inner class ToolIcon(private val kind: String) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 2f * resources.displayMetrics.density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        override fun draw(canvas: Canvas) {
+            val d = resources.displayMetrics.density
+            val x = bounds.exactCenterX()
+            val y = bounds.exactCenterY()
+            if (kind == "검색" || kind == "축소" || kind == "확대") {
+                canvas.drawCircle(x - 2 * d, y - 2 * d, 7 * d, paint)
+                canvas.drawLine(x + 3 * d, y + 3 * d, x + 8 * d, y + 8 * d, paint)
+                if (kind != "검색") {
+                    canvas.drawLine(x - 6 * d, y - 2 * d, x + 2 * d, y - 2 * d, paint)
+                    if (kind == "확대") canvas.drawLine(x - 2 * d, y - 6 * d, x - 2 * d, y + 2 * d, paint)
+                }
+            } else {
+                val direction = if (kind == "다음") 1 else -1
+                canvas.drawLine(x - direction * 4 * d, y - 7 * d, x + direction * 3 * d, y, paint)
+                canvas.drawLine(x + direction * 3 * d, y, x - direction * 4 * d, y + 7 * d, paint)
+                if (kind == "뒤로") canvas.drawLine(x - 4 * d, y, x + 7 * d, y, paint)
+            }
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Android Drawable 호환성")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
 }
