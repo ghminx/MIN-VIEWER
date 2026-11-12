@@ -15,6 +15,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import java.text.DateFormat
 import java.util.Date
 
@@ -81,7 +83,7 @@ class HomeScreen(
             setTextColor(Color.WHITE)
             contentDescription = "화면 설정"
             setOnClickListener {
-                AlertDialog.Builder(activity).setTitle("설정").setItems(arrayOf("화면 테마", "글꼴 관리", "최근 문서 전체 삭제")) { _, index ->
+                AlertDialog.Builder(activity).setTitle("설정").setItems(arrayOf("화면 테마", "글꼴 관리", "최근 문서 전체 삭제", "오픈소스 라이선스")) { _, index ->
                     if (index == 0) {
                         AlertDialog.Builder(activity).setTitle("화면 테마")
                             .setSingleChoiceItems(arrayOf("시스템 설정", "라이트", "다크"), ThemePreferences.selected(activity)) { dialog, selected ->
@@ -89,7 +91,8 @@ class HomeScreen(
                                 ThemePreferences.select(activity, selected)
                             }.setNegativeButton("취소", null).show()
                     } else if (index == 1) activity.startActivity(android.content.Intent(activity, FontsActivity::class.java))
-                    else confirmClear()
+                    else if (index == 2) confirmClear()
+                    else showLicenses()
                 }.show()
             }
         }, LayoutParams(dp(48), dp(48), Gravity.END or Gravity.CENTER_VERTICAL))
@@ -182,6 +185,47 @@ class HomeScreen(
     private fun confirmClear() {
         AlertDialog.Builder(activity).setMessage("최근 문서 목록을 모두 지울까요? 원본 파일은 삭제되지 않습니다.")
             .setNegativeButton("취소", null).setPositiveButton("삭제") { _, _ -> recent.clear(); refresh() }.show()
+    }
+
+    private fun showLicenses() {
+        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지")
+        AlertDialog.Builder(activity).setTitle("오픈소스 라이선스").setItems(labels) { _, index ->
+            if (index == 0) {
+                AlertDialog.Builder(activity).setTitle(labels[index]).setMessage(
+                    "LibreOffice 26.2.6.3: MPL 2.0 및 포함 구성 요소별 라이선스\n" +
+                        "원본: https://github.com/LibreOffice/core/tree/libreoffice-26.2.6.3\n" +
+                        "수정 사항 및 빌드 안내: https://github.com/ghminx/MIN-VIEWER\n\n" +
+                        "rhwp 0.9.0: MIT, https://github.com/edwardkim/rhwp\n" +
+                        "수식 문자 대응표: kordoc, MIT\n" +
+                        "Kotlin 표준 라이브러리 및 JetBrains annotations: Apache License 2.0\n\n" +
+                        "LibreOffice 상세 고지에는 포함된 제3자 구성 요소와 글꼴 고지가 포함되어 있습니다."
+                ).setPositiveButton("닫기", null).show()
+            } else {
+                val path = when (index) {
+                    1 -> "licenses/libreoffice/THIRD_PARTY.html"
+                    2 -> "rhwp/LICENSE"
+                    3 -> "rhwp/notices/THIRD_PARTY_LICENSES.md"
+                    else -> "licenses/kordoc.txt"
+                }
+                val text = activity.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val page = if (index == 1) text else "<html><meta charset=\"utf-8\"><body><pre style=\"white-space:pre-wrap\">" +
+                    android.text.TextUtils.htmlEncode(text) + "</pre></body></html>"
+                val web = WebView(activity).apply {
+                    settings.javaScriptEnabled = false
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.blockNetworkLoads = true
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = true
+                    }
+                    loadDataWithBaseURL(null, page, "text/html", "UTF-8", null)
+                }
+                AlertDialog.Builder(activity).setTitle(labels[index]).setView(web).setPositiveButton("닫기", null).create().apply {
+                    setOnDismissListener { web.destroy() }
+                    show()
+                }
+            }
+        }.setNegativeButton("닫기", null).show()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
