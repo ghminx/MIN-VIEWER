@@ -188,7 +188,7 @@ class HomeScreen(
     }
 
     private fun showLicenses() {
-        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지")
+        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지")
         AlertDialog.Builder(activity).setTitle("오픈소스 라이선스").setItems(labels) { _, index ->
             if (index == 0) {
                 AlertDialog.Builder(activity).setTitle(labels[index]).setMessage(
@@ -205,20 +205,27 @@ class HomeScreen(
                     1 -> "licenses/libreoffice/THIRD_PARTY.html"
                     2 -> "rhwp/LICENSE"
                     3 -> "rhwp/notices/THIRD_PARTY_LICENSES.md"
-                    else -> "licenses/kordoc.txt"
+                    4 -> "licenses/kordoc.txt"
+                    5 -> "licenses/libreoffice/libexttextcat.txt"
+                    else -> "licenses/rhwp-transitive-notices.txt"
                 }
-                val text = activity.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val page = if (index == 1) text else "<html><meta charset=\"utf-8\"><body><pre style=\"white-space:pre-wrap\">" +
-                    android.text.TextUtils.htmlEncode(text) + "</pre></body></html>"
                 val web = WebView(activity).apply {
                     settings.javaScriptEnabled = false
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.blockNetworkLoads = true
+                    settings.defaultTextEncodingName = "UTF-8"
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = true
                     }
-                    loadDataWithBaseURL(null, page, "text/html", "UTF-8", null)
+                    if (index == 6) {
+                        loadUrl("file:///android_asset/$path")
+                    } else {
+                        val text = activity.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        val page = if (index == 1) text else "<html><meta charset=\"utf-8\"><body><pre style=\"white-space:pre-wrap\">" +
+                            android.text.TextUtils.htmlEncode(text) + "</pre></body></html>"
+                        loadDataWithBaseURL(null, page, "text/html", "UTF-8", null)
+                    }
                 }
                 AlertDialog.Builder(activity).setTitle(labels[index]).setView(web).setPositiveButton("닫기", null).create().apply {
                     setOnDismissListener { web.destroy() }

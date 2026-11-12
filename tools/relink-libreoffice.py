@@ -14,6 +14,7 @@ def main():
     parser.add_argument("libreoffice_root", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--llvm-strip", type=Path, required=True)
+    parser.add_argument("--replace-archive", nargs=2, metavar=("ORIGINAL", "REPLACEMENT"))
     args = parser.parse_args()
     root = args.libreoffice_root.resolve(strict=True)
     output = args.output_dir.resolve()
@@ -38,6 +39,13 @@ def main():
     if len(lines) != 1:
         raise RuntimeError(f"링크 명령을 하나로 식별하지 못함: {len(lines)}개")
     command = shlex.split(lines[0])
+    if args.replace_archive:
+        original_archive, replacement_archive = (str(Path(p).resolve(strict=True)) for p in args.replace_archive)
+        matches = [i for i, value in enumerate(command) if value == original_archive]
+        if not matches:
+            raise RuntimeError("교체할 정적 라이브러리가 링크 명령에 없음")
+        for i in matches:
+            command[i] = replacement_archive
     target = command.index("-o") + 1
     if Path(command[target]) != original:
         raise RuntimeError("예상하지 못한 원본 출력 경로")

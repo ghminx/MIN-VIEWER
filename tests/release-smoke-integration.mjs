@@ -29,6 +29,26 @@ tap(xml, 'text', '출처 및 소스 안내');
 xml = await waitFor(/LibreOffice 26\.2\.6\.3/);
 assert.match(xml, /github\.com\/ghminx\/MIN-VIEWER/);
 run('shell', 'input', 'keyevent', 'BACK');
+xml = await waitFor(/최근 문서/);
+tap(xml, 'content-desc', '화면 설정');
+xml = await waitFor(/오픈소스 라이선스/);
+tap(xml, 'text', '오픈소스 라이선스');
+xml = await waitFor(/libexttextcat 라이선스/);
+tap(xml, 'text', 'libexttextcat 라이선스');
+await waitFor(/WiseGuys/);
+run('shell', 'input', 'keyevent', 'BACK');
+xml = await waitFor(/최근 문서/);
+tap(xml, 'content-desc', '화면 설정');
+xml = await waitFor(/오픈소스 라이선스/);
+tap(xml, 'text', '오픈소스 라이선스');
+xml = await waitFor(/rhwp 전이 의존성 고지/);
+tap(xml, 'text', 'rhwp 전이 의존성 고지');
+await waitFor(/rhwp 전이 의존성 고지/);
+await delay(3000);
+const screenshot = execFileSync(adb, ['exec-out', 'screencap', '-p']);
+const visibleText = "import io,sys; sys.path.insert(0,'.research/py'); from PIL import Image; i=Image.open(io.BytesIO(sys.stdin.buffer.read())).convert('L').crop((20,100,300,500)); sys.exit(0 if sum(v<64 for v in i.getdata())>500 else 1)";
+execFileSync('python', ['-c', visibleText], { input: screenshot });
+run('shell', 'input', 'keyevent', 'BACK');
 
 const files = [
     ['.research/engine-poc/real.hwp', 'beta-real.hwp', 'application/x-hwp', /1 \/ 35/],

@@ -1,0 +1,5 @@
+--- a/hyphen.c
++++ b/hyphen.c
+@@ -1149 +1149 @@
+-    fprintf(stderr, "error - bad, non UTF-8 input: %s\n", word);
++    fprintf(stderr, "MIN-VIEWER-LGPL-RELINK-TEST: bad UTF-8 input: %s\n", word);

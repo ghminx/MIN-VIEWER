@@ -8,5 +8,6 @@ LibreOfficeKit.java에서 표준 출력·오류 로그 전환 및 앱 데이터 
 CFB 버전 4 읽기 변경: patches/libreoffice-26.2-cfb4-read.patch
 수정 소스와 빌드 절차: https://github.com/ghminx/MIN-VIEWER
 LibreOffice 및 제3자 고지: THIRD_PARTY.html
+libexttextcat 저작권 및 라이선스: libexttextcat.txt
 
 포함된 구성 요소별 고지와 실제 링크 방식에 따른 배포 조건은 추가 검토 필요함.

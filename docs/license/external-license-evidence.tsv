@@ -1,0 +1,30 @@
+source-directory	top-level-license-files	license-html-reference
+argon2	LICENSE	name present
+cairo	COPYING, COPYING-LGPL-2.1, COPYING-MPL-1.1	name present
+curl	COPYING	name present
+fontconfig	COPYING	name present
+freetype	LICENSE.TXT	name present
+harfbuzz	COPYING	name present
+hunspell	COPYING, COPYING.LESSER, COPYING.MPL, license.hunspell, license.myspell	name present
+hyphen	COPYING, COPYING.LGPL, COPYING.MPL	name present
+icu	LICENSE, license.html	name present
+lcms2	LICENSE	name present
+libepubgen	COPYING	name present
+libexttextcat	LICENSE	name not matched
+liblangtag	COPYING	name present
+libnumbertext	COPYING	name present
+libodfgen	COPYING.LGPL, COPYING.MPL	name present
+liborcus	LICENSE	name present
+librevenge	COPYING.LGPL, COPYING.MPL	name present
+libtiff	LICENSE.md	name present
+libvisio	COPYING.MPL	name present
+libwebp	COPYING	name present
+libxml2	(없음: 추가 확인)	name present
+libxslt	(없음: 추가 확인)	name present
+mythes	COPYING	name present
+openssl	LICENSE.txt	name present
+pixman	COPYING	name present
+raptor	COPYING, COPYING.LIB, LICENSE-2.0.txt, LICENSE.html, LICENSE.txt, NOTICE	name present
+rasqal	COPYING, COPYING.LIB, LICENSE-2.0.txt, LICENSE.html, LICENSE.txt, NOTICE	name present
+redland	COPYING, COPYING.LIB, LICENSE-2.0.txt, LICENSE.html, LICENSE.txt, NOTICE	name present
+xmlsec	COPYING	name present
