@@ -1,8 +1,8 @@
-# v1.0.0~v1.0.3 베타 배포 라이선스 검토
+# v1.0.0~v1.0.4 베타 배포 라이선스 검토
 
 ## 확인 범위
 
-- 대상: GitHub `v1.0.0`·`v1.0.1` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3`에서 고지를 추가하며 LibreOffice 엔진 변경은 없음.
+- 대상: GitHub `v1.0.0`~`v1.0.4` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3`과 `v1.0.4`에서 고지를 추가하며 LibreOffice 엔진 변경은 없음.
 - APK에는 LibreOfficeKit, rhwp 및 해당 구성 요소의 고지와 글꼴이 포함됨.
 - LibreOffice 원본 고지 HTML과 rhwp 고지는 APK 자산 및 앱 설정의 라이선스 화면에서 확인 가능함.
 - LibreOffice 원본 태그는 `libreoffice-26.2.6.3`, 커밋은 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`임. 실제 LibreOffice 소스의 수정 파일 두 개에 저장소의 [패치](../patches/libreoffice-26.2-cfb4-read.patch)가 적용된 상태임을 확인함.
@@ -47,12 +47,16 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 - 동일 빌드 환경에서 정적 아카이브와 LGPL 고지가 있는 구성 요소의 소스를 확인함. 각 구성 요소에 적용되는 선택 가능한 라이선스는 추가 대조가 필요함.
 - LGPL 적용 대상이 정적으로 결합된 경우 해당 버전 및 결합 형태에 따라 수정 라이브러리로 다시 결합할 수 있는 자료 등의 제공 의무가 발생할 수 있음. [GNU LGPL 3.0](https://www.gnu.org/licenses/lgpl-3.0.html) 및 [GNU FAQ](https://www.gnu.org/licenses/gpl-faq.en.html)를 참고함.
 - 현재 저장소에는 엔진 원본 소스 위치와 수정 패치, 빌드 절차가 있으나 실제 배포 바이너리 전체에 대한 의존성별 소스·정확한 링크 결과·재결합 절차가 완비됐는지는 확인되지 않음.
-- APK의 OpenSymbol 바이너리 SHA-256은 LibreOffice `download.lst`가 지정한 `f543e6e2d7275557a839a164941c0a86e5f2c3f2a0042bfc434c88c6dde9e140`과 일치함. 수정용 원본은 [OpenSymbol.sfd](https://github.com/LibreOffice/core/blob/libreoffice-26.2.6.3/extras/source/truetype/symbol/OpenSymbol.sfd)이며 SHA-256은 `aca99a3aacca8e0c6e204a3b332bc3c766c880e81c3322cf511cc8553392f1e0`임.
-- 동일한 원본 파일을 포함하는 Debian LibreOffice 26.2.4.2 [저작권 기록](https://sources.debian.org/src/libreoffice/4:26.2.4.2-1~bpo13%2B1/debian/copyright/)은 해당 파일을 MPL 2.0으로 분류함. 원본의 저작권 필드와 MPL 2.0 전문을 수정 소스의 앱 화면에 추가함. 원본 파일 자체의 저작권 필드에는 라이선스가 명시되지 않으며, 개별 제3자 글리프의 권리 범위는 추가 확인이 필요함.
-- 나머지 글꼴 32개는 실제 APK의 각 파일 SHA-256과 원본 외부 소스 묶음 파일의 해시가 일치함. Carlito 4개, Caladea 4개, Gentium Basic 8개, Liberation 12개 및 Liberation Narrow 4개임. [파일별 대조 결과](license/font-matches.tsv)와 APK의 [기존 고지](../app/src/main/assets/licenses/libreoffice/THIRD_PARTY.html)를 보존함. Carlito·Gentium·Liberation·Liberation Narrow 원본 묶음의 라이선스 전문은 수정 소스의 앱 화면에 추가함. Caladea 원본 묶음에는 별도 라이선스 파일이 없어 기존 LibreOffice 고지를 확인 대상으로 유지함.
-- 기존 배포 APK에는 이번 추가 고지가 포함되지 않으므로 별도의 [보완 고지 ZIP](https://github.com/ghminx/MIN-VIEWER/releases/download/v1.0.3/MIN-VIEWER-font-redland-notices.zip)으로 제공함.
+- APK의 OpenSymbol 바이너리 SHA-256은 LibreOffice `download.lst`가 지정한 `f543e6e2d7275557a839a164941c0a86e5f2c3f2a0042bfc434c88c6dde9e140`과 일치함. 수정용 원본은 [OpenSymbol.sfd](https://github.com/LibreOffice/core/blob/libreoffice-26.2.6.3/extras/source/truetype/symbol/OpenSymbol.sfd)이며 SHA-256은 `aca99a3aacca8e0c6e204a3b332bc3c766c880e81c3322cf511cc8553392f1e0`임. TTF의 `name` 테이블에서 버전 102.12와 원본 SFD의 저작권 표시가 일치함을 추가 확인함.
+- 동일한 원본 파일을 포함하는 Debian LibreOffice 26.2.4.2 [저작권 기록](https://sources.debian.org/src/libreoffice/4:26.2.4.2-1~bpo13%2B1/debian/copyright/)은 해당 파일을 MPL 2.0으로 분류함. LibreOffice의 [2016년 변경 이력](https://github.com/LibreOffice/core/commit/37a14c5e359a554195fbcbe2805a284ccf4cb677)은 Google 저작권이 표시된 추가 글리프가 Apache 2.0 라이선스의 SymbolNeu에서 유래함을 명시함. 원본 저작권자, 원본 경로 및 MPL 2.0 전문을 수정 소스의 앱 고지에 추가하고 Apache 2.0 전문은 기존 LibreOffice 고지에서 제공함. 이는 개별 기여자에 대한 별도 법률 감정은 아님.
+- 나머지 글꼴 32개는 실제 APK의 각 파일 SHA-256과 원본 외부 소스 묶음 파일의 해시가 일치함. Carlito 4개, Caladea 4개, Gentium Basic 8개, Liberation 12개 및 Liberation Narrow 4개임. [파일별 대조 결과](license/font-matches.tsv)와 APK의 [기존 고지](../app/src/main/assets/licenses/libreoffice/THIRD_PARTY.html)를 보존함. Carlito·Gentium·Liberation·Liberation Narrow 원본 묶음의 라이선스 전문은 수정 소스의 앱 화면에 추가함. Caladea 원본 묶음에는 별도 라이선스 파일이 없으나 LibreOffice 고지와 동일 원본 묶음을 식별한 [CTAN 배포 기록](https://ctan.org/tex-archive/fonts/caladea)은 Apache 2.0을 명시함.
+- v1.0.3 이전 APK에는 이후 추가 고지가 포함되지 않으므로 [v1.0.4 기준 보완 고지 ZIP](https://github.com/ghminx/MIN-VIEWER/releases/download/v1.0.3/MIN-VIEWER-third-party-notices-v1.0.4.zip)으로 별도 제공함.
 - 네이티브·Rust 전이 의존성은 포함 여부와 버전별 고지의 완전성을 추가 대조해야 함. 링크 맵에서 실제 코드 섹션이 확인된 [정적 아카이브 190개](license/linked-native-archives.tsv)를 식별했으나, 이 목록 자체는 각 파일의 라이선스 검증 결과가 아님.
+- 링크 맵의 직접 경로에 나타난 29개와 LibreOffice 빌드 산출물 경로에서 확인한 9개 외부 구성 요소를 LibreOffice 빌드 정의와 [원본 파일·버전 목록](license/native-source-map.tsv)에 연결하고 해당 원본 파일이 공개된 외부 소스 묶음에 존재함을 확인함. 상위 라이선스·고지 파일과 FreeType의 실제 사용 표시 및 일부 하위 라이선스 원문을 [별도 고지](../app/src/main/assets/licenses/libreoffice/native-source-notices.txt)에 수집함. [수집 목록](license/native-notice-inventory.tsv)은 패키지의 모든 하위 파일을 조사한 결과는 아님.
+- libjpeg-turbo 3.1.4.1은 LibreOffice 빌드 정의에서 두 패치와 구성 헤더를 적용한 수정본임. 추가 고지에 수정 사실과 패치 경로 및 Independent JPEG Group 출처 문구를 명시하고 `README.ijg` 원문을 포함함. 원본 아카이브 및 패치가 포함된 LibreOffice 소스는 기존 릴리스 자료로 제공함.
+- APK의 `libc++_shared.so`는 Android NDK 29.0.14206865 원본을 `llvm-strip --strip-unneeded` 처리한 파일과 SHA-256이 일치함. 해당 NDK의 `NOTICE.toolchain`을 위 별도 고지에 포함함. NSS 3.128과 NSPR 4.39 원본 고지도 추가함. 별도 `libsqlite3.so`의 버전은 3.53.0이며 내장 소스 식별자 `4525003a53a7fc63ca75c59b22c79608659ca12f0131f52c18637f829977f20b`가 NSS 원본의 SQLite 소스와 일치함. 식별자 일치는 바이너리의 빌드 옵션과 수정 여부 전체가 동일하다는 증명은 아님.
 - rhwp 0.9.0의 `Cargo.lock`과 `wasm32-unknown-unknown` 대상 Cargo metadata에서 일반·빌드 의존성을 따라 [253개 후보 패키지 목록](license/rhwp-wasm-cargo-candidates.tsv)을 정리함. 워크스페이스의 기능 통합과 빌드 의존성이 포함될 수 있으므로 최종 WASM에 실제 링크된 정확한 패키지 목록이나 라이선스 준수 판정은 아님.
+- rhwp 수식 렌더러의 `brace_outline.rs` 등에는 Latin Modern Math의 윤곽 데이터와 GUST Font License 출처가 명시됨. 해당 프로젝트의 고지 자료에서 저작권, GUST Font License 및 참조되는 LPPL 1.3c 원문을 별도 앱 고지로 제공함. 원래 rhwp 고지 파일과 라이선스 자산도 함께 포함함.
 - 위 후보 중 250개는 로컬 Cargo 원본의 최상위 라이선스·고지 파일을 수집함. 나머지 `taffy`·`defmt-parser`·`alloc-stdlib`은 각 패키지에 기록된 정확한 [원본 커밋의 라이선스 파일](license/rhwp-upstream-licenses.tsv)을 추가로 확보함. 수집 결과는 `app/src/main/assets/licenses/rhwp-transitive-notices.txt`이며 보완 앱의 오픈소스 라이선스 화면에서도 확인 가능함.
 - MIN VIEWER 자체 코드에 [MIT 라이선스](../LICENSE)를 적용함. 제3자 코드와 수정된 제3자 파일에는 해당 구성 요소의 라이선스가 별도로 적용됨.
 

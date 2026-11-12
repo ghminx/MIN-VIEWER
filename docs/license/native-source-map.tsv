@@ -1,0 +1,39 @@
+component	source_archives	build_definitions
+argon2	ARGON2_TARBALL=phc-winner-argon2-20190702.tar.gz	external/argon2/UnpackedTarball_argon2.mk
+cairo	CAIRO_TARBALL=cairo-1.18.4.tar.xz | PIXMAN_TARBALL=pixman-0.46.4.tar.xz	external/cairo/UnpackedTarball_cairo.mk | external/cairo/UnpackedTarball_pixman.mk
+curl	CURL_TARBALL=curl-8.22.0.tar.xz	external/curl/UnpackedTarball_curl.mk
+fontconfig	FONTCONFIG_TARBALL=fontconfig-2.18.0.tar.xz	external/fontconfig/UnpackedTarball_fontconfig.mk
+freetype	FREETYPE_TARBALL=freetype-2.14.3.tar.xz	external/freetype/UnpackedTarball_freetype.mk
+harfbuzz	HARFBUZZ_TARBALL=harfbuzz-12.3.2.tar.xz	external/harfbuzz/UnpackedTarball_harfbuzz.mk
+hunspell	HUNSPELL_TARBALL=hunspell-1.7.3.tar.gz	external/hunspell/UnpackedTarball_hunspell.mk
+hyphen	HYPHEN_TARBALL=442b985e604f8143a5a0e7bacd6b2e40-hyphen-2.8.9.tar.gz	external/hyphen/UnpackedTarball_hyphen.mk
+icu	ICU_TARBALL=icu4c-78.3-sources.tgz | ICU_DATA_TARBALL=icu4c-78.3-data.zip	external/icu/UnpackedTarball_icu.mk
+lcms2	LCMS2_TARBALL=lcms2-2.19.1.tar.gz	external/lcms2/UnpackedTarball_lcms2.mk
+libepubgen	EPUBGEN_TARBALL=libepubgen-0.1.1.tar.xz	external/libepubgen/UnpackedTarball_libepubgen.mk
+libexttextcat	LIBEXTTEXTCAT_TARBALL=libexttextcat-3.4.8.tar.xz	external/libexttextcat/UnpackedTarball_libexttextcat.mk
+liblangtag	LIBLANGTAG_TARBALL=liblangtag-0.6.8.tar.bz2 | LANGTAGREG_TARBALL=language-subtag-registry-2026-08-08.tar.bz2	external/liblangtag/UnpackedTarball_liblangtag.mk
+libnumbertext	LIBNUMBERTEXT_TARBALL=libnumbertext-1.0.11.tar.xz	external/libnumbertext/UnpackedTarball_libnumbertext.mk
+libodfgen	ODFGEN_TARBALL=libodfgen-0.1.8.tar.xz	external/libodfgen/UnpackedTarball_libodfgen.mk
+liborcus	ORCUS_TARBALL=liborcus-0.21.0.tar.xz	external/liborcus/UnpackedTarball_liborcus.mk
+librevenge	REVENGE_TARBALL=librevenge-0.0.6.tar.bz2	external/librevenge/UnpackedTarball_librevenge.mk
+libtiff	LIBTIFF_TARBALL=tiff-4.7.2.tar.xz	external/libtiff/UnpackedTarball_libtiff.mk
+libvisio	VISIO_TARBALL=libvisio-0.1.11.tar.xz	external/libvisio/UnpackedTarball_libvisio.mk
+libwebp	LIBWEBP_TARBALL=libwebp-1.6.0.tar.gz	external/libwebp/UnpackedTarball_libwebp.mk
+libxml2	LIBXML_TARBALL=libxml2-2.14.6.tar.xz	external/libxml2/UnpackedTarball_libxml2.mk
+libxslt	LIBXSLT_TARBALL=libxslt-1.1.45.tar.xz	external/libxslt/UnpackedTarball_libxslt.mk
+mythes	MYTHES_TARBALL=mythes-1.2.6.tar.xz	external/mythes/UnpackedTarball_mythes.mk
+openssl	OPENSSL_TARBALL=openssl-3.5.7.tar.gz	external/openssl/UnpackedTarball_openssl.mk
+pixman	PIXMAN_TARBALL=pixman-0.46.4.tar.xz	external/cairo/UnpackedTarball_pixman.mk
+raptor	RAPTOR_TARBALL=raptor2-2.0.16.tar.gz	external/redland/UnpackedTarball_raptor.mk
+rasqal	RASQAL_TARBALL=1f5def51ca0026cd192958ef07228b52-rasqal-0.9.33.tar.gz	external/redland/UnpackedTarball_rasqal.mk
+redland	REDLAND_TARBALL=e5be03eda13ef68aabab6e42aa67715e-redland-1.0.17.tar.gz	external/redland/UnpackedTarball_raptor.mk | external/redland/UnpackedTarball_rasqal.mk | external/redland/UnpackedTarball_redland.mk
+xmlsec	XMLSEC_TARBALL=xmlsec1-1.3.12.tar.gz	external/xmlsec/UnpackedTarball_xmlsec.mk
+afdko	AFDKO_TARBALL=afdko-4.0.3.tar.gz | ANTLR4CPPRUNTIME_TARBALL=antlr4-cpp-runtime-4.13.2-source.zip	external/afdko/UnpackedTarball_afdko.mk
+boost	BOOST_TARBALL=boost_1_89_0.tar.xz	external/boost/UnpackedTarball_boost.mk
+expat	EXPAT_TARBALL=expat-2.8.4.tar.xz	external/expat/UnpackedTarball_expat.mk
+graphite	GRAPHITE_TARBALL=graphite2-minimal-1.3.15.tgz	external/graphite/UnpackedTarball_graphite.mk
+libjpeg-turbo	LIBJPEG_TURBO_TARBALL=libjpeg-turbo-3.1.4.1.tar.gz	external/libjpeg-turbo/UnpackedTarball_libjpeg-turbo.mk
+libpng	LIBPNG_TARBALL=libpng-1.6.58.tar.xz	external/libpng/UnpackedTarball_libpng.mk
+md4c	MD4C_TARBALL=md4c-release-0.5.3.tar.gz	external/md4c/UnpackedTarball_md4c.mk
+zxcvbn-c	ZXCVBN_C_TARBALL=zxcvbn-c-2.6.tar.gz	external/zxcvbn-c/UnpackedTarball_zxcvbn-c.mk
+zxing	ZXING_TARBALL=zxing-cpp-2.3.0.tar.gz	external/zxing/UnpackedTarball_zxing.mk

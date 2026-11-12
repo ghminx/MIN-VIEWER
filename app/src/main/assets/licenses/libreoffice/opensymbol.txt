@@ -17,8 +17,12 @@ uniF030 <-> uniF039 (c) 2020 Ming Hua
 
 Debian's copyright record for the identical source file in LibreOffice 26.2.4.2 identifies MPL-2.0 and notes that some files include Apache-2.0 material:
 https://sources.debian.org/src/libreoffice/4:26.2.4.2-1~bpo13%2B1/debian/copyright/
-The source font itself does not specify a license in its copyright field; attribution and licensing of individual third-party glyphs require further confirmation.
-The MPL 2.0 text below is included for reference. The LibreOffice third-party notice contains Apache 2.0 text.
+The LibreOffice commit adding the Google-copyrighted glyphs identifies their
+source as SymbolNeu from croscorefonts 1.23.0 under Apache License 2.0:
+https://github.com/LibreOffice/core/commit/37a14c5e359a554195fbcbe2805a284ccf4cb677
+The glyphs are modified by inclusion in OpenSymbol; the original attribution
+is reproduced above. The LibreOffice third-party notice contains the Apache
+License 2.0 text. The MPL 2.0 text follows below.
 
 Mozilla Public License Version 2.0
 ==================================

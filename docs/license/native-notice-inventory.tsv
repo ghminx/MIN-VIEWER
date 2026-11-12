@@ -1,0 +1,77 @@
+component	file	bytes
+argon2	LICENSE	17879
+cairo	COPYING	1576
+cairo	COPYING-LGPL-2.1	26533
+cairo	COPYING-MPL-1.1	25755
+curl	COPYING	1088
+fontconfig	COPYING	8616
+freetype	LICENSE.TXT	2149
+harfbuzz	COPYING	1971
+hunspell	COPYING	18093
+hunspell	COPYING.LESSER	26531
+hunspell	COPYING.MPL	25755
+hunspell	license.hunspell	1973
+hunspell	license.myspell	2912
+hyphen	COPYING	890
+hyphen	COPYING.LGPL	26532
+hyphen	COPYING.MPL	25755
+icu	LICENSE	27718
+icu	license.html	622
+lcms2	LICENSE	1080
+libepubgen	COPYING	16726
+libexttextcat	LICENSE	1496
+liblangtag	COPYING	7651
+libnumbertext	COPYING	1475
+libodfgen	COPYING.LGPL	26521
+libodfgen	COPYING.MPL	16726
+liborcus	LICENSE	16725
+librevenge	COPYING.LGPL	26521
+librevenge	COPYING.MPL	16726
+libtiff	LICENSE.md	2416
+libvisio	COPYING.MPL	16726
+libwebp	COPYING	1496
+libxml2	Copyright	1314
+libxslt	Copyright	2968
+mythes	COPYING	1707
+openssl	LICENSE.txt	10175
+pixman	COPYING	2087
+raptor	COPYING	17987
+raptor	COPYING.LIB	26527
+raptor	LICENSE-2.0.txt	11358
+raptor	LICENSE.html	3911
+raptor	LICENSE.txt	2967
+raptor	NOTICE	180
+rasqal	COPYING	17987
+rasqal	COPYING.LIB	26527
+rasqal	LICENSE-2.0.txt	11358
+rasqal	LICENSE.html	3596
+rasqal	LICENSE.txt	2853
+rasqal	NOTICE	180
+redland	COPYING	17987
+redland	COPYING.LIB	26527
+redland	LICENSE-2.0.txt	11358
+redland	LICENSE.html	3722
+redland	LICENSE.txt	3383
+redland	NOTICE	180
+xmlsec	COPYING	55
+xmlsec	Copyright	7333
+afdko	LICENSE.md	2305
+boost	LICENSE_1_0.txt	1338
+expat	COPYING	1144
+graphite	COPYING	1235
+graphite	LICENSE	29228
+libjpeg-turbo	LICENSE.md	5622
+libpng	LICENSE	5345
+md4c	LICENSE.md	1096
+zxcvbn-c	LICENSE.txt	1077
+zxing	LICENSE	11358
+NSS 3.128	COPYING	18100
+NSPR 4.39	LICENSE	16726
+NSS zlib	LICENSE	1002
+FreeType license	FTL.TXT	6743
+FreeType alternative GPL	GPLv2.TXT	17994
+libjpeg-turbo IJG license	README.ijg	12799
+liblangtag license alternatives	README	2021
+libnumbertext license alternatives	README.md	4886
+libnumbertext authors	AUTHORS	11711
+Android NDK 29 toolchain notices	NOTICE.toolchain	799639
