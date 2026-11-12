@@ -1,8 +1,8 @@
-# v1.0.0·v1.0.1 베타 배포 라이선스 검토
+# v1.0.0~v1.0.3 베타 배포 라이선스 검토
 
 ## 확인 범위
 
-- 대상: GitHub `v1.0.0`·`v1.0.1` 베타 ARM64 APK 및 해당 빌드 환경임. 두 버전의 LibreOffice 네이티브 엔진 해시는 동일함.
+- 대상: GitHub `v1.0.0`·`v1.0.1` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3`에서 고지를 추가하며 LibreOffice 엔진 변경은 없음.
 - APK에는 LibreOfficeKit, rhwp 및 해당 구성 요소의 고지와 글꼴이 포함됨.
 - LibreOffice 원본 고지 HTML과 rhwp 고지는 APK 자산 및 앱 설정의 라이선스 화면에서 확인 가능함.
 - LibreOffice 원본 태그는 `libreoffice-26.2.6.3`, 커밋은 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`임. 실제 LibreOffice 소스의 수정 파일 두 개에 저장소의 [패치](../patches/libreoffice-26.2-cfb4-read.patch)가 적용된 상태임을 확인함.
@@ -40,7 +40,7 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 
 - LibreOffice의 [Android 교차 빌드 설명](https://github.com/LibreOffice/core/blob/libreoffice-26.2.6.3/README.cross) 및 빌드 스크립트 `bin/lo-all-static-libs`는 LibreOffice와 여러 제3자 라이브러리의 정적 아카이브를 `liblo-native-code.so`에 결합하는 구조를 설명함.
 - Redland `rdf_init.c`는 LGPL 2.1 이상, GPL 2 이상, Apache 2.0 이상을 선택 가능한 라이선스로 명시함. 이는 해당 파일에 대한 확인이며 다른 Redland 구성 파일과 라이브러리의 조건까지 확인한 결과는 아님.
-- 실제 링크 맵에 포함된 libexttextcat의 BSD 저작권 고지가 기존 LibreOffice 고지 HTML에 없음을 확인함. 원본 라이선스 전문을 `app/src/main/assets/licenses/libreoffice/libexttextcat.txt`에 추가함. 기존 베타의 보완 고지도 별도 릴리스 자료로 제공함.
+- 실제 링크 맵에 포함된 libexttextcat의 BSD 저작권 고지가 기존 LibreOffice 고지 HTML에 없음을 확인함. 결합된 `common.c`·`fingerprint.c`·`textcat.c`·`wg_mempool.c`의 WiseGuys 고지와 `utf8misc.c`의 Jocelyn Merand 고지 전문을 `app/src/main/assets/licenses/libreoffice/libexttextcat.txt`에 추가함. v1.0.3 앱과 기존 베타의 별도 [보완 고지](https://github.com/ghminx/MIN-VIEWER/releases/download/v1.0.1/libexttextcat-complete-notice.txt)로 제공함.
 - [외부 구성 요소 고지 파일 대조](license/external-license-evidence.tsv)는 29개 외부 소스 디렉터리의 최상위 고지 파일과 LibreOffice 고지 HTML의 이름 출현 여부를 기록함. 단순 이름 대조 결과이며 개별 파일의 저작권·조건 충족을 검증한 것은 아님.
 - Hyphen 원본 `README`는 라이브러리의 LGPL·MPL 대안을 설명함. libnumbertext 원본 `README.md`는 인터프리터의 LGPL-3+·Modified BSD 이중 라이선스와 일부 언어 데이터의 별도 조건을 설명함. 각 파일과 실제 사용된 데이터의 조건까지 확인한 결과는 아님.
 - 동일 빌드 환경에서 정적 아카이브와 LGPL 고지가 있는 구성 요소의 소스를 확인함. 각 구성 요소에 적용되는 선택 가능한 라이선스는 추가 대조가 필요함.

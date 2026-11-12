@@ -12,7 +12,7 @@ MIN VIEWER는 휴대폰과 태블릿에서 문서를 원본 페이지 형태로 
 
 ## 설치
 
-- [v1.0.2 베타 APK 다운로드](https://github.com/ghminx/MIN-VIEWER/releases/tag/v1.0.2): Android 10 이상, ARM64 기기용임.
+- [v1.0.3 베타 APK 다운로드](https://github.com/ghminx/MIN-VIEWER/releases/tag/v1.0.3): Android 10 이상, ARM64 기기용임.
 - 다운로드한 APK를 기기에서 열어 설치함. 기존 디버그 시험판과 서명이 달라 덮어쓰기 설치가 불가능하며, 삭제 시 앱에 저장된 최근 기록과 글꼴이 지워질 수 있음.
 - PDF 검색과 암호 입력은 Android 15 이상에서 제공함. 기기와 문서별 추가 검증이 필요함.
 
