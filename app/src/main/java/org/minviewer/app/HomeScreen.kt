@@ -188,7 +188,7 @@ class HomeScreen(
     }
 
     private fun showLicenses() {
-        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지", "OpenSymbol 글꼴 고지", "기타 글꼴 라이선스", "Redland 계열 고지", "네이티브 구성 요소 고지", "한글 수식 글꼴 고지")
+        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지", "OpenSymbol 글꼴 고지", "기타 글꼴 라이선스", "Redland 계열 고지", "네이티브 구성 요소 고지", "한글 수식 글꼴 고지", "Rust 표준 라이브러리 고지")
         AlertDialog.Builder(activity).setTitle("오픈소스 라이선스").setItems(labels) { _, index ->
             if (index == 0) {
                 AlertDialog.Builder(activity).setTitle(labels[index]).setMessage(
@@ -212,7 +212,8 @@ class HomeScreen(
                     8 -> "licenses/libreoffice/font-notices.txt"
                     9 -> "licenses/libreoffice/redland-notice.txt"
                     10 -> "licenses/libreoffice/native-source-notices.txt"
-                    else -> "licenses/rhwp-font-notices.txt"
+                    11 -> "licenses/rhwp-font-notices.txt"
+                    else -> "licenses/rust-standard-library.html"
                 }
                 val web = WebView(activity).apply {
                     settings.javaScriptEnabled = false
@@ -223,7 +224,7 @@ class HomeScreen(
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = true
                     }
-                    if (index == 6 || index == 10) {
+                    if (index == 6 || index == 10 || index == 12) {
                         loadUrl("file:///android_asset/$path")
                     } else {
                         val text = activity.assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }

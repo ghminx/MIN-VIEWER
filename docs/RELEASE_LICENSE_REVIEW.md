@@ -1,8 +1,8 @@
-# v1.0.0~v1.0.4 베타 배포 라이선스 검토
+# v1.0.0~v1.0.5 베타 배포 라이선스 검토
 
 ## 확인 범위
 
-- 대상: GitHub `v1.0.0`~`v1.0.4` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3`과 `v1.0.4`에서 고지를 추가하며 LibreOffice 엔진 변경은 없음.
+- 대상: GitHub `v1.0.0`~`v1.0.5` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3` 이후 고지를 보완하며 LibreOffice 엔진 변경은 없음.
 - APK에는 LibreOfficeKit, rhwp 및 해당 구성 요소의 고지와 글꼴이 포함됨.
 - LibreOffice 원본 고지 HTML과 rhwp 고지는 APK 자산 및 앱 설정의 라이선스 화면에서 확인 가능함.
 - LibreOffice 원본 태그는 `libreoffice-26.2.6.3`, 커밋은 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`임. 실제 LibreOffice 소스의 수정 파일 두 개에 저장소의 [패치](../patches/libreoffice-26.2-cfb4-read.patch)가 적용된 상태임을 확인함.
@@ -60,11 +60,24 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 - 위 후보 중 250개는 로컬 Cargo 원본의 최상위 라이선스·고지 파일을 수집함. 나머지 `taffy`·`defmt-parser`·`alloc-stdlib`은 각 패키지에 기록된 정확한 [원본 커밋의 라이선스 파일](license/rhwp-upstream-licenses.tsv)을 추가로 확보함. 수집 결과는 `app/src/main/assets/licenses/rhwp-transitive-notices.txt`이며 보완 앱의 오픈소스 라이선스 화면에서도 확인 가능함.
 - MIN VIEWER 자체 코드에 [MIT 라이선스](../LICENSE)를 적용함. 제3자 코드와 수정된 제3자 파일에는 해당 구성 요소의 라이선스가 별도로 적용됨.
 
+## v1.0.5 하위 소스와 Rust 링크 추적
+
+- 동일한 LibreOffice 엔진의 재결합 링크 맵에서 외부 구성 요소 38개의 코드·읽기 전용 데이터·일반 데이터·BSS 섹션에 대응하는 아카이브·객체 이름 2,541개를 확인함. 동명 객체 두 쌍은 각각 서로 다른 소스의 고유 심볼이 링크된 사실을 확인함. [소스 대응표](license/native-linked-source-candidates.tsv)는 단일 파일명 후보, 빌드 정의·로그, 객체 디렉터리 및 고유 심볼 등 확인 방법을 구분함.
+- 위 대응표의 소스 경로 2,543개를 원본 아카이브와 [바이트 단위 비교](license/native-source-comparison.tsv)한 결과 2,448개가 일치하고 85개가 다름. 아카이브에서 찾지 못한 10개는 원본 템플릿에서 생성된 OpenSSL 소스 9개와 빌드 출력 디렉터리의 ICU 데이터 어셈블리 1개임. 원본과 다른 85개 파일의 [변경 패치](../patches/libreoffice-26.2-linked-native-changes.patch)를 생성함. 원본 파일의 별도 사본에 패치를 적용한 뒤 85개 모두 실제 빌드 소스와 SHA-256이 일치함을 확인함.
+- [하위 소스 고지 표기](license/native-source-header-evidence.tsv)에 파일 해시와 앞부분의 저작권·라이선스 단서를 기록함. 이는 자동 추출한 단서이며 헤더·생성 데이터와 파일 전체의 법적 검토를 대체하지 않음.
+- AFDKO에 실제 결합된 ANTLR C++ 4.13.2 런타임의 원본 라이선스는 기존에 수집한 AFDKO의 빌드 도구용 ANTLR 고지와 저작권 연도가 다름. 런타임 원문을 별도 고지에 추가함.
+- rhwp 소스를 Rust 1.93.1과 wasm-pack 0.15.0으로 다시 빌드하면서 링크 맵을 기록하고 Binaryen 133으로 동일 최적화를 적용함. 재생성 WASM과 v1.0.4 APK의 WASM SHA-256은 모두 `1fb10b6f31f428392e0c1243f7043c4a38557da8b43b54065d671dc2e54841f6`임.
+- 재현 빌드의 링크 맵에서 아카이브 108개를 식별함. [Rust 목록](license/rhwp-linked-archives.tsv)의 101개는 Cargo metadata와 컴파일 의존성 파일을 통해 패키지·버전과 연결했으며, 나머지 7개는 Rust 1.93.1의 표준 런타임 경로에서 확인함. 101개 모두 기존 rhwp 전이 의존성 고지에 이름과 버전이 존재함. 링크 맵은 wasm-bindgen 및 최종 최적화 이전 단계이므로 각 구성 요소의 코드가 최종 WASM에 남았다는 뜻은 아님.
+- 101개 패키지의 컴파일 의존성 파일에서 `.rs` 소스 2,043개를 확인하고 앞부분의 저작권·라이선스 표기와 해시를 [별도 기록](license/rhwp-source-header-evidence.tsv)에 수집함. 이는 자동 추출 결과이며, 파일 전체 문맥·생성 파일·비-Rust 자산의 개별 조건은 자동 검사만으로 확정할 수 없음.
+- Rust 1.93.1 공식 표준 라이브러리 저작권 문서와 동봉 라이선스, 해당 버전 `compiler-builtins` 원본 라이선스를 앱에 추가함. 표준 라이브러리 고지는 실제로 사용되지 않은 구성 요소도 포함할 수 있음.
+- v1.0.4 이전 APK의 이용자에게는 [v1.0.5 기준 보완 고지와 소스 대조 자료](https://github.com/ghminx/MIN-VIEWER/releases/download/v1.0.4/MIN-VIEWER-third-party-audit-v1.0.5.zip)를 별도로 제공함.
+- 재현 검사 도구는 `tools/audit-native-objects.py`, `tools/audit-native-headers.py`, `tools/audit-native-sources.py`, `tools/audit-rust-link.py`, `tools/audit-rust-sources.py`임. 네이티브 검사에는 원래 LibreOffice 빌드 디렉터리와 링크 맵이, Rust 검사에는 재현 빌드의 링크 맵·Cargo metadata·의존성 파일이 필요함.
+
 ## 조치 및 검증 필요 사항
 
-1. 링크 맵의 아카이브를 해당 소스 패키지 및 버전과 연결함.
-2. 각 구성 요소의 선택 가능한 라이선스, 수정 여부, 소스와 고지·재결합 요구사항을 검토함.
-3. 각 구성 요소의 고지와 소스 제공 경로가 배포 형태에 충분한지 검증함.
-4. 필요한 배포용 고지와 앱 내 안내를 보완하고 배포본을 재검증함.
+1. 링크 맵과 Cargo 기록을 이용한 하위 소스 식별, 원본과의 비교 및 확인된 고지 보완을 수행함.
+2. 자동 추출은 각 소스의 앞부분과 컴파일 기록에 나타난 파일을 대상으로 함. 실제 포함된 헤더·생성 데이터의 개별 저작권, 라이선스 선택 및 수정 의무는 전체 수작업 대조가 필요함. 특히 ICU 데이터 어셈블리와 공개된 ICU 데이터 원본의 일대일 재생성은 미검증 상태임.
+3. 공개된 재결합 자료로 Hyphen 교체를 시험했으나 모든 교체 대상과 새 환경의 전체 원본 빌드는 검증하지 못함.
+4. 최종 WASM은 wasm-bindgen과 최적화 과정을 거치므로 재현 링크 맵에 나온 108개 아카이브가 최종 파일에 모두 남았다고 단정하지 않음.
 
 현재 베타 릴리스의 라이선스 준수 검토는 완료되지 않았으며 법률적 최종 판단은 별도로 필요함.

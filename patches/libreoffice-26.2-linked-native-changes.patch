@@ -1,0 +1,3174 @@
+--- a/afdko/c/makeotf/lib/cffread/cffread.c
++++ b/afdko/c/makeotf/lib/cffread/cffread.c
+@@ -11,8 +11,8 @@
+ #include <limits.h>
+ #include <math.h>
+ #include <stdio.h>
+-#include "cffread.h"
+-#include "dictops.h"
++#include "../../include/cffread.h"
++#include "../../resource/dictops.h"
+ 
+ /* Define to supply Microsoft-specific function calling info, e.g. __cdecl */
+ #ifndef CDECL
+@@ -49,7 +49,7 @@
+ /* Type conversions */
+ #define INT(f) ((int16_t)(((f)&0xffff0000) >> 16))
+ #define FRAC(f) ((f)&0x0000ffff)
+-#define INT2FIX(i) ((Fixed)(i) << 16)
++#define INT2FIX(i) ((Fixed)((uint32_t)(i) << 16))
+ #define FIX2INT(f) ((short)(((f) + FixedHalf) >> 16))
+ #define FIX2DBL(f) ((double)((f) / fixedScale))
+ #define DBL2FIX(d) ((Fixed)((d)*fixedScale + ((d) < 0 ? -0.5 : 0.5)))
+--- a/afdko/c/makeotf/lib/hotconv/cmap.c
++++ b/afdko/c/makeotf/lib/hotconv/cmap.c
+@@ -8,7 +8,7 @@
+ #include <stdlib.h>
+ #include <limits.h>
+ 
+-#include "hotconv.h"
++#include "../../include/hotconv.h"
+ #include "cmap.h"
+ #include "hotmap.h"
+ #include "feat.h"
+--- a/afdko/c/makeotf/lib/hotconv/hot.c
++++ b/afdko/c/makeotf/lib/hotconv/hot.c
+@@ -324,7 +324,9 @@
+ 
+     /* Convert to CFF */
+     tcflags = 0;
+-    tcflags |= TC_DO_WARNINGS;
++    if (!(flags & HOT_SUPRESS_WARNINGS)) {
++        tcflags |= TC_DO_WARNINGS;
++    }
+     if (flags & HOT_ADD_AUTH_AREA) {
+         tcflags |= TC_ADDAUTHAREA;
+     }
+@@ -383,7 +385,9 @@
+          fi->FontName.length);
+     g->font.FontName.array[fi->FontName.length] = '\0';
+     g->font.FontName.cnt = fi->FontName.length + 1;
+-    hotMsg(g, hotHEADING, "processing font <%s>", g->font.FontName.array);
++    if (!(flags & HOT_SUPRESS_WARNINGS)) {
++        hotMsg(g, hotHEADING, "processing font <%s>", g->font.FontName.array);
++    }
+ 
+     /* Copy basic font information */
+     g->font.Notice = fi->Notice;
+@@ -1440,7 +1444,7 @@
+ /* Print note, error, warning, or fatal message (from note buffer is fmt is
+    NULL). If note used, handle reuse of g->note. */
+ void CDECL hotMsg(hotCtx g, int level, const char *fmt, ...) {
+-    if (g->cb.message != NULL) {
++    if (g->cb.message != NULL && g->convertFlags & HOT_CONVERT_VERBOSE) {
+         // int lenName = g->font.FontName.cnt + 2;
+ 
+         if (fmt == NULL) {
+--- a/afdko/c/makeotf/lib/hotconv/map.c
++++ b/afdko/c/makeotf/lib/hotconv/map.c
+@@ -21,7 +21,7 @@
+ #include <stdarg.h>
+ #include <limits.h>
+ 
+-#include "pstoken.h"
++#include "../../include/pstoken.h"
+ 
+ #define SET_BIT_ARR(a, b) (a[(b) / 32] |= 1UL << (b) % 32)
+ #define TEST_BIT_ARR(a, b) (a[(b) / 32] & 1UL << (b) % 32)
+--- a/afdko/c/makeotf/lib/pstoken/pstoken.c
++++ b/afdko/c/makeotf/lib/pstoken/pstoken.c
+@@ -7,7 +7,7 @@
+  */
+ 
+ #include <stdint.h>
+-#include "pstoken.h"
++#include "../../include/pstoken.h"
+ 
+ #include <stdarg.h>
+ #include <stdlib.h>
+--- a/afdko/c/makeotf/lib/typecomp/parse.c
++++ b/afdko/c/makeotf/lib/typecomp/parse.c
+@@ -15,8 +15,8 @@
+ #include "t13.h"
+ #include "recode.h"
+ 
+-#include "txops.h"
+-#include "pstoken.h"
++#include "../../resource/txops.h"
++#include "../../include/pstoken.h"
+ 
+ #include <stdarg.h>
+ #include <stdio.h>
+--- a/afdko/c/makeotf/lib/typecomp/recode.c
++++ b/afdko/c/makeotf/lib/typecomp/recode.c
+@@ -8,7 +8,7 @@
+ #include "parse.h"
+ #include "subr.h"
+ 
+-#include "txops.h"
++#include "../../resource/txops.h"
+ 
+ #include <limits.h>
+ #include <stdio.h>
+@@ -248,7 +248,7 @@
+ 
+ #include <math.h>
+ 
+-#include "cffread.h"
++#include "../../include/cffread.h"
+ 
+ /* Degrees to radians multiplying constant */
+ #define DEG_2_RAD (3.141592653589793 / 180)
+@@ -1727,10 +1727,10 @@
+ 
+             case 255: {
+                 /* 5 byte number */
+-                int32_t value = (int32_t)cstr[i + 1] << 24 | (int32_t)cstr[i + 2] << 16 |
+-                                (int32_t)cstr[i + 3] << 8 | (int32_t)cstr[i + 4];
++                int32_t value = (uint32_t)cstr[i + 1] << 24 | (uint32_t)cstr[i + 2] << 16 |
++                                (uint32_t)cstr[i + 3] << 8 | (uint32_t)cstr[i + 4];
+                 if (-32000 <= value && value <= 32000) {
+-                    value <<= 16;
++                    value = (uint32_t)value << 16;
+                 } else {
+                     h->intDiv = 1;
+                 }
+@@ -3690,7 +3690,7 @@
+     /* Remove encryption */
+     for (i = 0; i < length; i++) {
+         unsigned char plain = cstr[i] ^ (r1 >> 8);
+-        r1 = (cstr[i] + r1) * 52845 + 22719;
++        r1 = (unsigned)(cstr[i] + r1) * 52845 + 22719;
+         cstr[i] = plain;
+     }
+ }
+--- a/afdko/c/makeotf/source/c_main.c
++++ b/afdko/c/makeotf/source/c_main.c
+@@ -269,6 +269,7 @@
+     exit(0);
+ }
+ 
++#if 0
+ extern char *sep();
+ 
+ /* Copy directory path with overflow checking */
+@@ -744,6 +745,7 @@
+ 
+     convert.fontDone = 1;
+ }
++#endif
+ 
+ /*Used to parse the parameter string passed in by python
+  * start is the start index and is updated to the beginning of the next substring
+@@ -822,6 +824,7 @@
+     }
+ }
+ 
++#if 0
+ /* Main program */
+ int c_main(int argc, char *argv[]) {
+     dnaCtx mainDnaCtx = NULL;
+@@ -874,3 +877,4 @@
+ 
+     return 0;
+ }
++#endif
+--- a/afdko/c/makeotf/source/cb.c
++++ b/afdko/c/makeotf/source/cb.c
+@@ -267,14 +267,14 @@
+         /* Full block */
+         *count = fileReadN(&h->ps.file, BUFSIZ, h->ps.buf);
+         if (*count != BUFSIZ) {
+-            fileError(&h->ps.file);
++            fileHandleError(&h->ps.file);
+         }
+         h->ps.left -= BUFSIZ;
+     } else if (h->ps.left > 0) {
+         /* Partial block */
+         *count = fileReadN(&h->ps.file, h->ps.left, h->ps.buf);
+         if (*count != h->ps.left) {
+-            fileError(&h->ps.file);
++            fileHandleError(&h->ps.file);
+         }
+         h->ps.left = 0;
+     } else {
+@@ -531,7 +531,7 @@
+     cbCtx h = ctx;
+     h->tmp.file.name = "tmpfile";
+     if ((h->tmp.file.fp = tmpfile()) == NULL) {
+-        fileError(&h->tmp.file);
++        fileHandleError(&h->tmp.file);
+     }
+ }
+ 
+@@ -636,7 +636,7 @@
+     File *file = &h->fcdb.files.array[fileid];
+     fileSeek(file, offset, SEEK_SET);
+     if (fileReadN(file, length, buf) != length)
+-        fileError(file);
++        fileHandleError(file);
+ }
+ 
+ // [fcdb callback] Report database parsing warning.
+@@ -1185,7 +1185,8 @@
+ 
+ /* Create new callback context */
+ cbCtx cbNew(char *progname, char *pfbdir, char *otfdir,
+-            char *cmapdir, char *featdir, dnaCtx mainDnaCtx) {
++            char *cmapdir, char *featdir, dnaCtx mainDnaCtx,
++            void (*fatal)(void*)) {
+     static hotCallbacks template = {
+         NULL, /* Callback context; set after creation */
+         myfatal,
+@@ -1233,6 +1234,8 @@
+     h->dir.cmap = cmapdir;
+ 
+     h->hot.cb = template; /* Copy template */
++    if (fatal)
++    	h->hot.cb.fatal = fatal;
+     h->hot.cb.ctx = h;
+ 
+     h->dnaCtx = mainDnaCtx;
+--- a/afdko/c/makeotf/source/cbpriv.c
++++ b/afdko/c/makeotf/source/cbpriv.c
+@@ -5,7 +5,7 @@
+ #include <stdio.h>
+ #include <stdarg.h>
+ 
+-#include "hotconv.h"
++#include "../include/hotconv.h"
+ #include "cb.h"
+ 
+ extern void myfatal(void *ctx);
+--- a/afdko/c/makeotf/source/file.c
++++ b/afdko/c/makeotf/source/file.c
+@@ -23,7 +23,7 @@
+ #endif /* SUNOS */
+ 
+ /* Print file error message and quit */
+-void fileError(File *f) {
++void fileHandleError(File *f) {
+     cbFatal(f->h, "file error <%s> [%s]", strerror(errno), f->name);
+ }
+ 
+@@ -33,7 +33,7 @@
+     f->name = filename;
+     f->fp = fopen(filename, mode);
+     if (f->fp == NULL) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+ }
+ 
+@@ -52,7 +52,7 @@
+ int fileReadN(File *f, size_t count, void *ptr) {
+     size_t n = fread(ptr, 1, count, f->fp);
+     if (n == 0 && ferror(f->fp)) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+     return n;
+ }
+@@ -61,7 +61,7 @@
+ int fileWriteN(File *f, size_t count, void *ptr) {
+     size_t n = fwrite(ptr, 1, count, f->fp);
+     if (n != count) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+     return n;
+ }
+@@ -88,7 +88,7 @@
+ /* Seek on file */
+ void fileSeek(File *f, long offset, int wherefrom) {
+     if (fseek(f->fp, offset, wherefrom) != 0) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+ }
+ 
+@@ -96,7 +96,7 @@
+ long fileTell(File *f) {
+     long posn = ftell(f->fp);
+     if (posn == -1) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+     return posn;
+ }
+@@ -104,7 +104,7 @@
+ /* Check for errors and close file */
+ void fileClose(File *f) {
+     if (ferror(f->fp)) {
+-        fileError(f);
++        fileHandleError(f);
+     }
+     fclose(f->fp);
+ }
+--- a/afdko/c/mergefonts/source/mergeFonts.c
++++ b/afdko/c/mergefonts/source/mergeFonts.c
+@@ -1177,6 +1177,14 @@
+     if (end == 0)
+         return;
+ 
++    while (end >= 0) {
++        if ((str[end] == ' ') || (str[end] == '\t') || (str[end] == ')') || (str[end] == '\r') || (str[end] == '\n'))
++            end--;
++        else
++            break;
++    }
++    str[end + 1] = 0;
++
+     while (start < MAX_DICT_ENTRY_LEN) {
+         if ((str[start] == ' ') || (str[start] == '\t') || (str[start] == '(') || (str[start] == '\r') || (str[start] == '\n'))
+             start++;
+@@ -1184,14 +1192,6 @@
+             break;
+     }
+ 
+-    while (end >= 0) {
+-        if ((str[end] == ' ') || (str[end] == '\t') || (str[end] == ')') || (str[end] == '\r') || (str[end] == '\n'))
+-            end--;
+-        else
+-            break;
+-    }
+-
+-    str[end + 1] = 0;
+     if (start > 0)
+         memmove(str, &str[start], (end - start) + 2);
+     if (strlen(str) == 0) {
+@@ -1200,7 +1200,7 @@
+     }
+ }
+ 
+-static void readCIDFontInfo(txCtx h, char *filePath) {
++void readCIDFontInfo(txCtx h, char *filePath) {
+     int lineno;
+     FILE *fp;
+     MergeInfo *mergeInfo = (MergeInfo *)h->appSpecificInfo;
+@@ -1677,7 +1677,7 @@
+ 
+ /* Process merging multi-file set. Return index of last used arg. */
+ /* Currently implemented only for mode_cff */
+-static int doMergeFileSet(txCtx h, int argc, char *argv[], int i) {
++int doMergeFileSet(txCtx h, int argc, char *argv[], int i) {
+     sourceCtx srcCtx;
+     int fileIndex = 0;
+     int fileCount = 0;
+@@ -1727,7 +1727,9 @@
+         for (j = 0; j < mergeInfo->newiFDArray.cnt; j++) {
+             if (curMaxFD < mergeInfo->newiFDArray.array[j]) {
+                 curMaxFD = mergeInfo->newiFDArray.array[j];
+-                fprintf(stderr, "Adding font dict %d from %s.\n", curMaxFD, h->src.stm.filename);
++                if (h->flags & SHOW_NAMES) {
++                    fprintf(stderr, "Adding font dict %d from %s.\n", curMaxFD, h->src.stm.filename);
++                }
+             }
+         }
+ 
+@@ -2609,10 +2611,34 @@
+     }
+ }
+ 
++void mergeFontsFree(txCtx h);
++
+ /* Initialize context. */
+-static void txNew(txCtx h, char *progname) {
++txCtx mergeFontsNew(char *progname) {
+     ctlMemoryCallbacks cb;
+-    MergeInfo *mergeInfo = (MergeInfo *)h->appSpecificInfo;
++    txCtx h;
++    MergeInfo *mergeInfo;
++
++    /* Allocate program context */
++    h = malloc(sizeof(struct txCtx_));
++    if (h == NULL) {
++        fprintf(stderr, "%s: out of memory\n", progname);
++        return NULL;
++    }
++    memset(h, 0, sizeof(struct txCtx_));
++
++    h->app = APP_MERGEFONTS;
++    h->appSpecificInfo = malloc(sizeof(MergeInfo));
++    if (h == NULL) {
++        fprintf(stderr, "%s: out of memory\n", progname);
++	free(h);
++        return NULL;
++    }
++    memset(h->appSpecificInfo, 0, sizeof(MergeInfo));
++
++    h->appSpecificFree = mergeFontsFree;
++
++    mergeInfo = (MergeInfo *)h->appSpecificInfo;
+ 
+     h->progname = progname;
+     h->flags = 0;
+@@ -2690,10 +2716,12 @@
+ 
+     /* Clear the SEEN_MODE bit after setting the default mode */
+     h->flags = 0;
++
++    return h;
+ }
+ 
+ /* Free context. */
+-static void txFree(txCtx h) {
++void mergeFontsFree(txCtx h) {
+     long i;
+ 
+     memFree(h, h->script.buf);
+@@ -2749,6 +2777,7 @@
+     free(h);
+ }
+ 
++#if 0
+ /* Main program. */
+ int CTL_CDECL main(int argc, char *argv[]) {
+     txCtx h;
+@@ -2770,25 +2799,11 @@
+     --argc;
+     ++argv;
+ 
+-    /* Allocate program context */
+-    h = malloc(sizeof(struct txCtx_));
+-    if (h == NULL) {
+-        fprintf(stderr, "%s: out of memory\n", progname);
+-        return EXIT_FAILURE;
+-    }
+-    memset(h, 0, sizeof(struct txCtx_));
+-
+-    h->app = APP_MERGEFONTS;
+-    h->appSpecificInfo = malloc(sizeof(MergeInfo));
++    h = mergeFontsNew(progname);
+     if (h == NULL) {
+         fprintf(stderr, "%s: out of memory\n", progname);
+         exit(1);
+     }
+-    memset(h->appSpecificInfo, 0, sizeof(MergeInfo));
+-
+-    h->appSpecificFree = txFree;
+-
+-    txNew(h, progname);
+ 
+     if (argc > 1 && getOptionIndex(argv[argc - 2]) == opt_s) {
+         /* Option list ends with script option */
+@@ -2810,7 +2825,8 @@
+         fprintf(stderr, "mem_manage() called %ld times in this run.\n",
+                 h->failmem.iCall);
+     }
+-    txFree(h);
++    mergeFontsFree(h);
+ 
+     return 0;
+ }
++#endif
+--- a/afdko/c/shared/source/cffwrite/cffwrite.c
++++ b/afdko/c/shared/source/cffwrite/cffwrite.c
+@@ -488,7 +488,8 @@
+     return newFDIndex;
+ }
+ 
+-int cfwMergeFDArray(cfwCtx g, abfTopDict *top, int *newFDIndex) {
++long cfwMergeFDArray(void *g_, abfTopDict *top, int *newFDIndex) {
++    cfwCtx g = g_;
+     abfFontDict *srcDict = &top->FDArray.array[0];
+     int i = 0;
+ 
+--- a/afdko/c/shared/source/dynarr/dynarr.c
++++ b/afdko/c/shared/source/dynarr/dynarr.c
+@@ -68,6 +68,9 @@
+    0. If the client has arranged to trap allocation failures in the memory
+    callback functions by using setjmp/longjmp, for example, the -1 return will
+    never occur and the macro wrappers provided will be safe to use. */
++#if defined __clang__
++__attribute__((no_sanitize("function")))
++#endif
+ long dnaGrow(void *object, size_t elemsize, long index) {
+     void *new_ptr;
+     size_t new_size;
+--- a/afdko/c/shared/source/pstoken/pstoken.c
++++ b/afdko/c/shared/source/pstoken/pstoken.c
+@@ -201,7 +201,7 @@
+         else {
+             unsigned char cipher = hi_nib << 4 | nib;
+             *dst++ = cipher ^ (h->cipher.r >> 8);
+-            h->cipher.r = (cipher + h->cipher.r) * 52845 + 22719;
++            h->cipher.r = (unsigned)(cipher + h->cipher.r) * 52845 + 22719;
+             hi_nib = -1;
+         }
+     } while (src < end);
+@@ -232,7 +232,7 @@
+     for (i = 0; i < length; i++) {
+         unsigned char cipher = *src++;
+         *dst++ = cipher ^ (h->cipher.r >> 8);
+-        h->cipher.r = (cipher + h->cipher.r) * 52845 + 22719;
++        h->cipher.r = (unsigned)(cipher + h->cipher.r) * 52845 + 22719;
+     }
+ 
+     return 0;
+--- a/afdko/c/shared/source/t1cstr/t1cstr.c
++++ b/afdko/c/shared/source/t1cstr/t1cstr.c
+@@ -1504,13 +1504,13 @@
+ 
+         /* Prime state from random initial bytes */
+         while (lenIV--)
+-            r = (*c++ + r) * 52845 + 22719;
++            r = (unsigned)(*c++ + r) * 52845 + 22719;
+ 
+         /* Decrypt and copy bytes */
+         while (cnt--) {
+             unsigned char c1 = *c++;
+             *p++ = c1 ^ (r >> 8);
+-            r = (c1 + r) * 52845 + 22719;
++            r = (unsigned)(c1 + r) * 52845 + 22719;
+         }
+     }
+     return t1cSuccess;
+--- a/afdko/c/shared/source/t1write/t1write.c
++++ b/afdko/c/shared/source/t1write/t1write.c
+@@ -187,7 +187,7 @@
+     char *q = buf;
+     while (cnt--) {
+         unsigned char c = *p++ ^ h->eexec.r >> 8;
+-        h->eexec.r = (c + h->eexec.r) * 52845 + 22719;
++        h->eexec.r = (unsigned)(c + h->eexec.r) * 52845 + 22719;
+         *q++ = hexmap[c >> 4 & 0xf];
+         *q++ = hexmap[c & 0xf];
+     }
+@@ -376,7 +376,7 @@
+     p = data;
+     for (i = 0; i < length; i++) {
+         unsigned char c = *p ^ (r >> 8);
+-        r = (c + r) * 52845 + 22719;
++        r = (unsigned)(c + r) * 52845 + 22719;
+         *p++ = c;
+     }
+ 
+--- a/afdko/c/shared/source/t2cstr/t2cstr.c
++++ b/afdko/c/shared/source/t2cstr/t2cstr.c
+@@ -673,7 +673,7 @@
+ 
+     /* Compute mask length and unused bit mask */
+     h->mask.length = (short)((h->stems.cnt + 7) / 8);
+-    h->mask.unused = ~(~0 << (h->mask.length * 8 - h->stems.cnt));
++    h->mask.unused = ~(~0U << (h->mask.length * 8 - h->stems.cnt));
+ 
+     return 0;
+ }
+--- a/afdko/c/shared/source/ttread/ttread.c
++++ b/afdko/c/shared/source/ttread/ttread.c
+@@ -721,7 +721,7 @@
+ 
+ /* Read 4-byte signed number. */
+ static int32_t sread4(ttrCtx h) {
+-    uint32_t value = (int32_t)read1(h) << 24;
++    uint32_t value = (uint32_t)read1(h) << 24;
+     value |= (uint32_t)read1(h) << 16;
+     value |= (uint32_t)read1(h) << 8;
+     value |= (uint32_t)read1(h);
+--- a/afdko/c/tx/source/tx.c
++++ b/afdko/c/tx/source/tx.c
+@@ -127,7 +127,7 @@
+ /* ---------------------------- cffread Library ---------------------------- */
+ 
+ /* Read font with cffread library. */
+-static void cfrReadFont(txCtx h, long origin, int ttcIndex) {
++void cfrReadFont(txCtx h, long origin, int ttcIndex) {
+     float *uv;
+     if (h->cfr.ctx == NULL) {
+         h->cfr.ctx = cfrNew(&h->cb.mem, &h->cb.stm, CFR_CHECK_ARGS);
+@@ -1403,9 +1403,24 @@
+     }
+ }
+ 
++void txFree(txCtx h);
++
+ /* Initialize context. */
+-static void txNew(txCtx h, char *progname) {
++txCtx txNew(char *progname) {
+     ctlMemoryCallbacks cb;
++    txCtx h;
++
++    /* Allocate program context */
++    h = malloc(sizeof(struct txCtx_));
++    if (h == NULL) {
++        fprintf(stderr, "%s: out of memory\n", progname);
++        return NULL;
++    }
++    memset(h, 0, sizeof(struct txCtx_));
++
++    h->app = APP_TX;
++    h->appSpecificInfo = NULL; /* unused in tx.c, used in rotateFont.c & mergeFonts.c */
++    h->appSpecificFree = txFree;
+ 
+     h->progname = progname;
+     h->flags = 0;
+@@ -1480,10 +1495,12 @@
+ 
+     /* Clear the SEEN_MODE bit after setting the default mode */
+     h->flags = 0;
++
++    return h;
+ }
+ 
+ /* Free context. */
+-static void txFree(txCtx h) {
++void txFree(txCtx h) {
+     long i;
+ 
+     memFree(h, h->script.buf);
+@@ -1539,6 +1556,7 @@
+     free(h);
+ }
+ 
++#if 0
+ /* Main program. */
+ int CTL_CDECL main(int argc, char *argv[]) {
+     txCtx h;
+@@ -1564,19 +1582,11 @@
+     --argc;
+     ++argv;
+ 
+-    /* Allocate program context */
+-    h = malloc(sizeof(struct txCtx_));
++    h = txNew(progname);
+     if (h == NULL) {
+         fprintf(stderr, "%s: out of memory\n", progname);
+         return EXIT_FAILURE;
+     }
+-    memset(h, 0, sizeof(struct txCtx_));
+-
+-    h->app = APP_TX;
+-    h->appSpecificInfo = NULL; /* unused in tx.c, used in rotateFont.c & mergeFonts.c */
+-    h->appSpecificFree = txFree;
+-
+-    txNew(h, progname);
+ 
+     if (argc > 1 && getOptionIndex(argv[argc - 2]) == opt_s) {
+         /* Option list ends with script option */
+@@ -1602,3 +1612,4 @@
+ 
+     return 0;
+ }
++#endif
+--- a/argon2/src/blake2/blake2b.c
++++ b/argon2/src/blake2/blake2b.c
+@@ -88,7 +88,7 @@
+ }
+ 
+ /* Sequential blake2b initialization */
+-int blake2b_init(blake2b_state *S, size_t outlen) {
++int argon2_blake2b_init(blake2b_state *S, size_t outlen) {
+     blake2b_param P;
+ 
+     if (S == NULL) {
+@@ -156,7 +156,7 @@
+         uint8_t block[BLAKE2B_BLOCKBYTES];
+         memset(block, 0, BLAKE2B_BLOCKBYTES);
+         memcpy(block, key, keylen);
+-        blake2b_update(S, block, BLAKE2B_BLOCKBYTES);
++        argon2_blake2b_update(S, block, BLAKE2B_BLOCKBYTES);
+         /* Burn the key from stack */
+         clear_internal_memory(block, BLAKE2B_BLOCKBYTES);
+     }
+@@ -221,7 +221,7 @@
+ #undef ROUND
+ }
+ 
+-int blake2b_update(blake2b_state *S, const void *in, size_t inlen) {
++int argon2_blake2b_update(blake2b_state *S, const void *in, size_t inlen) {
+     const uint8_t *pin = (const uint8_t *)in;
+ 
+     if (inlen == 0) {
+@@ -261,7 +261,7 @@
+     return 0;
+ }
+ 
+-int blake2b_final(blake2b_state *S, void *out, size_t outlen) {
++int argon2_blake2b_final(blake2b_state *S, void *out, size_t outlen) {
+     uint8_t buffer[BLAKE2B_OUTBYTES] = {0};
+     unsigned int i;
+ 
+@@ -314,15 +314,15 @@
+             goto fail;
+         }
+     } else {
+-        if (blake2b_init(&S, outlen) < 0) {
++        if (argon2_blake2b_init(&S, outlen) < 0) {
+             goto fail;
+         }
+     }
+ 
+-    if (blake2b_update(&S, in, inlen) < 0) {
+-        goto fail;
+-    }
+-    ret = blake2b_final(&S, out, outlen);
++    if (argon2_blake2b_update(&S, in, inlen) < 0) {
++        goto fail;
++    }
++    ret = argon2_blake2b_final(&S, out, outlen);
+ 
+ fail:
+     clear_internal_memory(&S, sizeof(S));
+@@ -352,18 +352,18 @@
+     } while ((void)0, 0)
+ 
+     if (outlen <= BLAKE2B_OUTBYTES) {
+-        TRY(blake2b_init(&blake_state, outlen));
+-        TRY(blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
+-        TRY(blake2b_update(&blake_state, in, inlen));
+-        TRY(blake2b_final(&blake_state, out, outlen));
++        TRY(argon2_blake2b_init(&blake_state, outlen));
++        TRY(argon2_blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
++        TRY(argon2_blake2b_update(&blake_state, in, inlen));
++        TRY(argon2_blake2b_final(&blake_state, out, outlen));
+     } else {
+         uint32_t toproduce;
+         uint8_t out_buffer[BLAKE2B_OUTBYTES];
+         uint8_t in_buffer[BLAKE2B_OUTBYTES];
+-        TRY(blake2b_init(&blake_state, BLAKE2B_OUTBYTES));
+-        TRY(blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
+-        TRY(blake2b_update(&blake_state, in, inlen));
+-        TRY(blake2b_final(&blake_state, out_buffer, BLAKE2B_OUTBYTES));
++        TRY(argon2_blake2b_init(&blake_state, BLAKE2B_OUTBYTES));
++        TRY(argon2_blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
++        TRY(argon2_blake2b_update(&blake_state, in, inlen));
++        TRY(argon2_blake2b_final(&blake_state, out_buffer, BLAKE2B_OUTBYTES));
+         memcpy(out, out_buffer, BLAKE2B_OUTBYTES / 2);
+         out += BLAKE2B_OUTBYTES / 2;
+         toproduce = (uint32_t)outlen - BLAKE2B_OUTBYTES / 2;
+--- a/argon2/src/core.c
++++ b/argon2/src/core.c
+@@ -544,31 +544,31 @@
+         return;
+     }
+ 
+-    blake2b_init(&BlakeHash, ARGON2_PREHASH_DIGEST_LENGTH);
++    argon2_blake2b_init(&BlakeHash, ARGON2_PREHASH_DIGEST_LENGTH);
+ 
+     store32(&value, context->lanes);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, context->outlen);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, context->m_cost);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, context->t_cost);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, context->version);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, (uint32_t)type);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     store32(&value, context->pwdlen);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     if (context->pwd != NULL) {
+-        blake2b_update(&BlakeHash, (const uint8_t *)context->pwd,
++        argon2_blake2b_update(&BlakeHash, (const uint8_t *)context->pwd,
+                        context->pwdlen);
+ 
+         if (context->flags & ARGON2_FLAG_CLEAR_PASSWORD) {
+@@ -578,18 +578,18 @@
+     }
+ 
+     store32(&value, context->saltlen);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     if (context->salt != NULL) {
+-        blake2b_update(&BlakeHash, (const uint8_t *)context->salt,
++        argon2_blake2b_update(&BlakeHash, (const uint8_t *)context->salt,
+                        context->saltlen);
+     }
+ 
+     store32(&value, context->secretlen);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     if (context->secret != NULL) {
+-        blake2b_update(&BlakeHash, (const uint8_t *)context->secret,
++        argon2_blake2b_update(&BlakeHash, (const uint8_t *)context->secret,
+                        context->secretlen);
+ 
+         if (context->flags & ARGON2_FLAG_CLEAR_SECRET) {
+@@ -599,14 +599,14 @@
+     }
+ 
+     store32(&value, context->adlen);
+-    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++    argon2_blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
+ 
+     if (context->ad != NULL) {
+-        blake2b_update(&BlakeHash, (const uint8_t *)context->ad,
++        argon2_blake2b_update(&BlakeHash, (const uint8_t *)context->ad,
+                        context->adlen);
+     }
+ 
+-    blake2b_final(&BlakeHash, blockhash, ARGON2_PREHASH_DIGEST_LENGTH);
++    argon2_blake2b_final(&BlakeHash, blockhash, ARGON2_PREHASH_DIGEST_LENGTH);
+ }
+ 
+ int initialize(argon2_instance_t *instance, argon2_context *context) {
+--- a/boost/libs/locale/src/encoding/codepage.cpp
++++ b/boost/libs/locale/src/encoding/codepage.cpp
+@@ -29,6 +29,7 @@
+                         const std::string& from_charset,
+                         method_type how)
+     {
++#if defined(BOOST_LOCALE_WITH_ICONV) || defined(BOOST_LOCALE_WITH_ICU) || defined(BOOST_LOCALE_WITH_WCONV)
+ #ifdef BOOST_LOCALE_WITH_ICONV
+         {
+             impl::iconv_between cvt;
+@@ -50,12 +51,17 @@
+                 return cvt.convert(begin, end);
+         }
+ #endif
++#endif
++        // ensures we get a sensible warning in boost's gettext results about a real mismatch.
++        if (to_charset == from_charset)
++            return std::string(begin, end - begin);
+         throw invalid_charset_error(std::string(to_charset) + " or " + from_charset);
+     }
+ 
+     template<typename CharType>
+     std::basic_string<CharType> to_utf(const char* begin, const char* end, const std::string& charset, method_type how)
+     {
++#if defined(BOOST_LOCALE_WITH_ICONV) || defined(BOOST_LOCALE_WITH_ICU) || defined(BOOST_LOCALE_WITH_WCONV)
+ #ifdef BOOST_LOCALE_WITH_ICONV
+         {
+             impl::iconv_to_utf<CharType> cvt;
+@@ -76,6 +82,7 @@
+             if(cvt.open(charset, how))
+                 return cvt.convert(begin, end);
+         }
++#endif
+ #endif
+         throw invalid_charset_error(charset);
+     }
+@@ -83,6 +90,7 @@
+     template<typename CharType>
+     std::string from_utf(const CharType* begin, const CharType* end, const std::string& charset, method_type how)
+     {
++#if defined(BOOST_LOCALE_WITH_ICONV) || defined(BOOST_LOCALE_WITH_ICU) || defined(BOOST_LOCALE_WITH_WCONV)
+ #ifdef BOOST_LOCALE_WITH_ICONV
+         {
+             impl::iconv_from_utf<CharType> cvt;
+@@ -103,6 +111,7 @@
+             if(cvt.open(charset, how))
+                 return cvt.convert(begin, end);
+         }
++#endif
+ #endif
+         throw invalid_charset_error(charset);
+     }
+--- a/boost/libs/locale/src/std/std_backend.cpp
++++ b/boost/libs/locale/src/std/std_backend.cpp
+@@ -138,10 +138,14 @@
+                 } else
+                     name_ = "C";
+             } else {
++#if !defined(BOOST_WINDOWS)
+                 if(loadable(lid)) {
+                     name_ = lid;
+                     utf_mode_ = utf8_support::native;
+                 } else {
++#else
++                {
++#endif
+                     std::vector<std::string> alt_names;
+                     if(l_win)
+                         alt_names.push_back(l_win.name);
+--- a/boost/libs/locale/src/util/locale_data.cpp
++++ b/boost/libs/locale/src/util/locale_data.cpp
+@@ -72,6 +72,8 @@
+     bool locale_data::parse(const std::string& locale_name)
+     {
+         reset();
++        encoding_ = "UTF-8";
++        utf8_ = true;
+         return parse_from_lang(locale_name);
+     }
+ 
+--- a/cairo/src/cairo-bentley-ottmann-rectilinear.c
++++ b/cairo/src/cairo-bentley-ottmann-rectilinear.c
+@@ -455,6 +455,11 @@
+     if (unlikely (polygon->num_edges == 0))
+ 	return CAIRO_STATUS_SUCCESS;
+ 
++#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
++    if (unlikely (polygon->num_edges > 100000))
++	return CAIRO_STATUS_SUCCESS;
++#endif
++
+     num_events = 2 * polygon->num_edges;
+ 
+     events = stack_events;
+--- a/cairo/src/cairo-boxes.c
++++ b/cairo/src/cairo-boxes.c
+@@ -41,6 +41,7 @@
+ _cairo_boxes_init (cairo_boxes_t *boxes)
+ {
+     boxes->status = CAIRO_STATUS_SUCCESS;
++    boxes->limits = NULL;
+     boxes->num_limits = 0;
+     boxes->num_boxes = 0;
+ 
+--- a/cairo/src/cairo-ft-font.c
++++ b/cairo/src/cairo-ft-font.c
+@@ -627,7 +627,10 @@
+     if (ret == FcResultOutOfMemory)
+ 	return _cairo_error (CAIRO_STATUS_NO_MEMORY);
+     if (ret == FcResultMatch) {
+-	if (access (filename, R_OK) == 0) {
++       int nFD = -1;
++       int n;
++       if ((sscanf (filename, "/:FD:/%d%n", &nFD, &n) == 1 && filename[n] == '\0') ||
++	    access (filename, R_OK) == 0) {
+ 	    /* If FC_INDEX is not set, we just use 0 */
+ 	    ret = FcPatternGetInteger (pattern, FC_INDEX, 0, &id);
+ 	    if (ret == FcResultOutOfMemory)
+@@ -1312,6 +1315,19 @@
+ 		return _cairo_error (CAIRO_STATUS_NO_MEMORY);
+ 
+ 	    memcpy (data, bitmap->buffer, (size_t)stride * height);
++	}
++
++	{
++	    /* swizzle to rgba */
++	    unsigned int i, count = height * width;
++	    unsigned char *p = data;
++	    for (i = 0; i < count; i++)
++	    {
++		unsigned char tmp = p[0];
++		p[0] = p[2];
++		p[2] = tmp;
++		p+=4;
++	    }
+ 	}
+ 
+ 	if (!_cairo_is_little_endian ())
+@@ -2620,7 +2636,7 @@
+ 	/* We tried loading a color glyph and can now check if we got
+ 	 * a color glyph and set scaled_glyph->color_glyph
+ 	 * accordingly */
+-	if (pixman_image_get_format (surface->pixman_image) == PIXMAN_a8r8g8b8 &&
++	if (pixman_image_get_format (surface->pixman_image) == PIXMAN_a8b8g8r8 &&
+ 	    !pixman_image_get_component_alpha (surface->pixman_image))
+ 	{
+ 	    _cairo_scaled_glyph_set_color_surface (scaled_glyph,
+--- a/cairo/src/cairo-gstate.c
++++ b/cairo/src/cairo-gstate.c
+@@ -2306,8 +2306,9 @@
+ 		if (!drop || KEEP_GLYPH (transformed_glyphs[j]))
+ 		    j++;
+ 	    }
+-	    memcpy (transformed_clusters, clusters,
+-		    num_clusters * sizeof (cairo_text_cluster_t));
++        if (num_clusters != 0)
++            memcpy (transformed_clusters, clusters,
++                num_clusters * sizeof (cairo_text_cluster_t));
+ 	} else {
+ 	    const cairo_glyph_t *cur_glyph;
+ 
+@@ -2361,8 +2362,9 @@
+ 		if (! drop || KEEP_GLYPH (transformed_glyphs[j]))
+ 		    j++;
+ 	    }
+-	    memcpy (transformed_clusters, clusters,
+-		    num_clusters * sizeof (cairo_text_cluster_t));
++        if (num_clusters)
++            memcpy (transformed_clusters, clusters,
++                num_clusters * sizeof (cairo_text_cluster_t));
+ 	} else {
+ 	    const cairo_glyph_t *cur_glyph;
+ 
+--- a/cairo/src/cairo-image-compositor.c
++++ b/cairo/src/cairo-image-compositor.c
+@@ -1072,7 +1072,7 @@
+     format = PIXMAN_a8;
+     i = (info->extents.width + 3) & ~3;
+     if (scaled_glyph->surface->base.content & CAIRO_CONTENT_COLOR) {
+-	format = PIXMAN_a8r8g8b8;
++	format = PIXMAN_a8b8g8r8;
+ 	i = info->extents.width * 4;
+     }
+ 
+@@ -1124,7 +1124,7 @@
+ 		format == PIXMAN_a8) {
+ 		pixman_image_t *ca_mask;
+ 
+-		format = PIXMAN_a8r8g8b8;
++		format = PIXMAN_a8b8g8r8;
+ 		ca_mask = pixman_image_create_bits (format,
+ 						    info->extents.width,
+ 						    info->extents.height,
+@@ -1173,7 +1173,7 @@
+ 	}
+     }
+ 
+-    if (format == PIXMAN_a8r8g8b8)
++    if (format == PIXMAN_a8b8g8r8)
+ 	pixman_image_set_component_alpha (mask, TRUE);
+ 
+     pixman_image_composite32 (_pixman_operator (op),
+--- a/cairo/src/cairo-image-source.c
++++ b/cairo/src/cairo-image-source.c
+@@ -86,7 +86,7 @@
+ 	if (unlikely (image == NULL))
+ 	    return NULL;
+ 
+-	if (_cairo_atomic_ptr_cmpxchg (&__pixman_transparent_image,
++	if (_cairo_atomic_ptr_cmpxchg ((cairo_atomic_intptr_t *) &__pixman_transparent_image,
+ 				       NULL, image))
+ 	{
+ 	    pixman_image_ref (image);
+@@ -118,7 +118,7 @@
+ 	if (unlikely (image == NULL))
+ 	    return NULL;
+ 
+-	if (_cairo_atomic_ptr_cmpxchg (&__pixman_black_image,
++	if (_cairo_atomic_ptr_cmpxchg ((cairo_atomic_intptr_t *) &__pixman_black_image,
+ 				       NULL, image))
+ 	{
+ 	    pixman_image_ref (image);
+@@ -150,7 +150,7 @@
+ 	if (unlikely (image == NULL))
+ 	    return NULL;
+ 
+-	if (_cairo_atomic_ptr_cmpxchg (&__pixman_white_image,
++	if (_cairo_atomic_ptr_cmpxchg ((cairo_atomic_intptr_t *) &__pixman_white_image,
+ 				       NULL, image))
+ 	{
+ 	    pixman_image_ref (image);
+@@ -507,6 +507,19 @@
+ 	color.red = expand_channel((pixel >> 20) & 0x3fff, 10);
+ 	color.green = expand_channel((pixel >> 10) & 0x3fff, 10);
+ 	color.blue = expand_channel(pixel & 0x3fff, 10);
++	return pixman_image_create_solid_fill (&color);
++
++    case CAIRO_FORMAT_RGB24_888:
++	pixel = (uint32_t)(image->data + y * image->stride + 3 * x)[0] | ((uint32_t)(image->data + y * image->stride + 3 * x)[1] << 8) | ((uint32_t)(image->data + y * image->stride + 3 * x)[2] << 16);
++	if (pixel == 0)
++	    return _pixman_black_image ();
++	if (pixel == 0x00ffffff)
++	    return _pixman_white_image ();
++
++	color.alpha = 0xffff;
++	color.red = (pixel >> 16 & 0xff) | (pixel >> 8 & 0xff00);
++	color.green = (pixel >> 8 & 0xff) | (pixel & 0xff00);
++	color.blue = (pixel & 0xff) | (pixel << 8 & 0xff00);
+ 	return pixman_image_create_solid_fill (&color);
+ 
+     case CAIRO_FORMAT_ARGB32:
+--- a/cairo/src/cairo-image-surface.c
++++ b/cairo/src/cairo-image-surface.c
+@@ -97,11 +97,11 @@
+ 	return CAIRO_FORMAT_RGBA128F;
+     case PIXMAN_rgb_float:
+ 	return CAIRO_FORMAT_RGB96F;
+-    case PIXMAN_a8r8g8b8:
++    case PIXMAN_a8b8g8r8: //tweaked
+ 	return CAIRO_FORMAT_ARGB32;
+     case PIXMAN_x2r10g10b10:
+ 	return CAIRO_FORMAT_RGB30;
+-    case PIXMAN_x8r8g8b8:
++    case PIXMAN_x8b8g8r8: //tweaked
+ 	return CAIRO_FORMAT_RGB24;
+     case PIXMAN_a8:
+ 	return CAIRO_FORMAT_A8;
+@@ -109,13 +109,15 @@
+ 	return CAIRO_FORMAT_A1;
+     case PIXMAN_r5g6b5:
+ 	return CAIRO_FORMAT_RGB16_565;
++    case PIXMAN_b8g8r8: //tweaked
++	return CAIRO_FORMAT_RGB24_888;
+     case PIXMAN_r8g8b8a8: case PIXMAN_r8g8b8x8:
+     case PIXMAN_a8r8g8b8_sRGB:
+ #if HAS_PIXMAN_r8g8b8_sRGB
+     case PIXMAN_r8g8b8_sRGB:
+ #endif
+-    case PIXMAN_a8b8g8r8: case PIXMAN_x8b8g8r8: case PIXMAN_r8g8b8:
+-    case PIXMAN_b8g8r8:   case PIXMAN_b5g6r5:
++    case PIXMAN_a8r8g8b8: case PIXMAN_x8r8g8b8: //tweaked
++    case PIXMAN_r8g8b8:   case PIXMAN_b5g6r5:
+     case PIXMAN_a1r5g5b5: case PIXMAN_x1r5g5b5: case PIXMAN_a1b5g5r5:
+     case PIXMAN_x1b5g5r5: case PIXMAN_a4r4g4b4: case PIXMAN_x4r4g4b4:
+     case PIXMAN_a4b4g4r4: case PIXMAN_x4b4g4r4: case PIXMAN_r3g3b2:
+@@ -333,7 +335,7 @@
+ 	ret = PIXMAN_a8;
+ 	break;
+     case CAIRO_FORMAT_RGB24:
+-	ret = PIXMAN_x8r8g8b8;
++	ret = PIXMAN_x8b8g8r8; //tweaked
+ 	break;
+     case CAIRO_FORMAT_RGB30:
+ 	ret = PIXMAN_x2r10g10b10;
+@@ -347,10 +349,13 @@
+     case CAIRO_FORMAT_RGBA128F:
+ 	ret = PIXMAN_rgba_float;
+ 	break;
++	case CAIRO_FORMAT_RGB24_888:
++	ret = PIXMAN_b8g8r8; // tweaked
++	break;
+     case CAIRO_FORMAT_ARGB32:
+     case CAIRO_FORMAT_INVALID:
+     default:
+-	ret = PIXMAN_a8r8g8b8;
++	ret = PIXMAN_a8b8g8r8; //tweaked
+ 	break;
+     }
+     return ret;
+@@ -743,6 +748,8 @@
+     case CAIRO_FORMAT_RGB30:
+     case CAIRO_FORMAT_RGB24:
+ 	return 32;
++	case CAIRO_FORMAT_RGB24_888:
++	return 24;
+     case CAIRO_FORMAT_RGB16_565:
+ 	return 16;
+     case CAIRO_FORMAT_A8:
+--- a/cairo/src/cairo-surface.c
++++ b/cairo/src/cairo-surface.c
+@@ -2952,7 +2952,7 @@
+ 	scaled_font->options.color_mode != CAIRO_COLOR_MODE_NO_COLOR)
+     {
+         utf8_copy = malloc (sizeof (char) * utf8_len);
+-        memcpy (utf8_copy, utf8, sizeof (char) * utf8_len);
++        if (utf8_len != 0) memcpy (utf8_copy, utf8, sizeof (char) * utf8_len);
+         utf8 = utf8_copy;
+ 
+         status = composite_color_glyphs (surface, op,
+--- a/cairo/src/cairo-tor-scan-converter.c
++++ b/cairo/src/cairo-tor-scan-converter.c
+@@ -253,7 +253,7 @@
+ #elif GRID_XY == 15
+ #  define  GRID_AREA_TO_ALPHA(c)  (((c) << 4) + (c))
+ #elif GRID_XY == 2*256*15
+-#  define  GRID_AREA_TO_ALPHA(c)  (((c) + ((c)<<4) + 256) >> 9)
++#  define  GRID_AREA_TO_ALPHA(c)  (((c) + ((uint32_t)(c)<<4) + 256) >> 9)
+ #else
+ #  define  GRID_AREA_TO_ALPHA(c)  (((c)*255 + GRID_XY/2) / GRID_XY)
+ #endif
+--- a/expat/lib/xmlparse.c
++++ b/expat/lib/xmlparse.c
+@@ -107,6 +107,10 @@
+ #include <errno.h>
+ 
+ #ifdef _WIN32
++#  undef HAVE_ARC4RANDOM
++#  undef HAVE_ARC4RANDOM_BUF
++#  undef HAVE_GETRANDOM
++#  undef HAVE_SYSCALL_GETRANDOM
+ #  define getpid GetCurrentProcessId
+ #else
+ #  include <sys/time.h>  /* gettimeofday() */
+--- a/fontconfig/src/fcinit.c
++++ b/fontconfig/src/fcinit.c
+@@ -108,7 +108,14 @@
+ 
+     FcInitDebug();
+ 
+-    if (!FcConfigParseAndLoad (config, 0, FcTrue)) {
++#if defined(__APPLE__)
++    // macOS doesn't have a default /etc/fonts/font.conf, so silence warning
++    // about that for now
++    FcBool complain = FcFalse;
++#else
++    FcBool complain = FcTrue;
++#endif
++    if (!FcConfigParseAndLoad (config, 0, complain)) {
+ 	const FcChar8 *sysroot = FcConfigGetSysRoot (config);
+ 	FcConfig      *fallback = FcInitFallbackConfigWithFilter (config, sysroot);
+ 
+--- a/freetype/builds/unix/ftsystem.c
++++ b/freetype/builds/unix/ftsystem.c
+@@ -249,13 +249,21 @@
+   {
+     int          file;
+     struct stat  stat_buf;
++    int nFD;
++    int n;
+ 
+ 
+     if ( !stream )
+       return FT_THROW( Invalid_Stream_Handle );
+ 
+     /* open the file */
+-    file = open( filepathname, O_RDONLY );
++    if ( sscanf( filepathname, "/:FD:/%d%n", &nFD, &n ) == 1 && filepathname[n] == '\0')
++    {
++      lseek( nFD, 0, SEEK_SET );
++      file = dup( nFD );
++    }
++    else
++      file = open( filepathname, O_RDONLY );
+     if ( file < 0 )
+     {
+       FT_ERROR(( "FT_Stream_Open:" ));
+--- a/graphite/src/gr_face.cpp
++++ b/graphite/src/gr_face.cpp
+@@ -72,7 +72,7 @@
+ 
+     Face *res = new Face(appFaceHandle, *ops);
+     if (res && load_face(*res, faceOptions))
+-        return static_cast<gr_face *>(res);
++        return reinterpret_cast<gr_face *>(res);
+ 
+     delete res;
+     return 0;
+--- a/icu/source/i18n/decimfmt.cpp
++++ b/icu/source/i18n/decimfmt.cpp
+@@ -8,6 +8,13 @@
+ // Allow implicit conversion from char16_t* to UnicodeString for this file:
+ // Helpful in toString methods and elsewhere.
+ #define UNISTR_FROM_STRING_EXPLICIT
++
++#ifdef __ANDROID__
++#ifndef ARM
++#define ARM
++#endif
++#include <android/compatibility.hxx>
++#endif
+ 
+ #include <cmath>
+ #include <cstdlib>
+--- a/icu/source/common/putil.cpp
++++ b/icu/source/common/putil.cpp
+@@ -1247,8 +1247,16 @@
+         static const time_t decemberSolstice=1198332540; /*2007-12-22 06:09 UT*/
+ 
+         /* This probing will tell us when daylight savings occurs.  */
++#if U_PLATFORM_IS_DARWIN_BASED
++        struct tm *tmp;
++        tmp = localtime(&juneSolstice);
++        juneSol = *tmp;
++        tmp = localtime(&decemberSolstice);
++        decemberSol = *tmp;
++#else
+         localtime_r(&juneSolstice, &juneSol);
+         localtime_r(&decemberSolstice, &decemberSol);
++#endif
+         if(decemberSol.tm_isdst > 0) {
+           daylightType = U_DAYLIGHT_DECEMBER;
+         } else if(juneSol.tm_isdst > 0) {
+--- a/icu/source/common/dictionarydata.cpp
++++ b/icu/source/common/dictionarydata.cpp
+@@ -44,7 +44,7 @@
+ 
+ int32_t UCharsDictionaryMatcher::matches(UText *text, int32_t maxLength, int32_t limit,
+                             int32_t *lengths, int32_t *cpLengths, int32_t *values,
+-                            int32_t *prefix) const {
++                            int32_t *prefix, UnicodeSet const* ignoreSet, int32_t minLength) const {
+ 
+     UCharsTrie uct(characters);
+     int32_t startingTextIndex = static_cast<int32_t>(utext_getNativeIndex(text));
+@@ -55,7 +55,13 @@
+         UStringTrieResult result = (codePointsMatched == 0) ? uct.first(c) : uct.next(c);
+         int32_t lengthMatched = static_cast<int32_t>(utext_getNativeIndex(text)) - startingTextIndex;
+         codePointsMatched += 1;
++        if (ignoreSet != NULL && ignoreSet->contains(c)) {
++            continue;
++        }
+         if (USTRINGTRIE_HAS_VALUE(result)) {
++            if (codePointsMatched < minLength) {
++                continue;
++            }
+             if (wordCount < limit) {
+                 if (values != nullptr) {
+                     values[wordCount] = uct.getValue();
+@@ -112,7 +118,7 @@
+ 
+ int32_t BytesDictionaryMatcher::matches(UText *text, int32_t maxLength, int32_t limit,
+                             int32_t *lengths, int32_t *cpLengths, int32_t *values,
+-                            int32_t *prefix) const {
++                            int32_t *prefix, UnicodeSet const* ignoreSet, int32_t minLength) const {
+     BytesTrie bt(characters);
+     int32_t startingTextIndex = static_cast<int32_t>(utext_getNativeIndex(text));
+     int32_t wordCount = 0;
+@@ -122,7 +128,13 @@
+         UStringTrieResult result = (codePointsMatched == 0) ? bt.first(transform(c)) : bt.next(transform(c));
+         int32_t lengthMatched = static_cast<int32_t>(utext_getNativeIndex(text)) - startingTextIndex;
+         codePointsMatched += 1;
++        if (ignoreSet != NULL && ignoreSet->contains(c)) {
++            continue;
++        }
+         if (USTRINGTRIE_HAS_VALUE(result)) {
++            if (codePointsMatched < minLength) {
++                continue;
++            }
+             if (wordCount < limit) {
+                 if (values != nullptr) {
+                     values[wordCount] = bt.getValue();
+--- a/icu/source/common/dictbe.cpp
++++ b/icu/source/common/dictbe.cpp
+@@ -35,7 +35,19 @@
+  ******************************************************************
+  */
+ 
+-DictionaryBreakEngine::DictionaryBreakEngine() {
++DictionaryBreakEngine::DictionaryBreakEngine()
++    : fTypes(0), clusterLimit(0) {
++}
++
++DictionaryBreakEngine::DictionaryBreakEngine(uint32_t breakTypes)
++    : fTypes(breakTypes), clusterLimit(3) {
++    UErrorCode status = U_ZERO_ERROR;
++    fViramaSet.applyPattern(UnicodeString(u"[[:ccc=VR:]]"), status);
++
++    // note Skip Sets contain fIgnoreSet characters too.
++    fSkipStartSet.applyPattern(UnicodeString(u"[[:lb=OP:][:lb=QU:]\\u200C\\u200D\\u2060]"), status);
++    fSkipEndSet.applyPattern(UnicodeString(u"[[:lb=CP:][:lb=QU:][:lb=EX:][:lb=CL:]\\u200C\\u200D\\u2060]"), status);
++    fNBeforeSet.applyPattern(UnicodeString(u"[[:lb=CR:][:lb=LF:][:lb=NL:][:lb=SP:][:lb=ZW:][:lb=IS:][:lb=BA:][:lb=NS:]]"), status);
+ }
+ 
+ DictionaryBreakEngine::~DictionaryBreakEngine() {
+@@ -83,6 +95,169 @@
+     fSet = set;
+     // Compact for caching
+     fSet.compact();
++}
++
++bool
++DictionaryBreakEngine::scanBeforeStart(UText *text, int32_t& start, bool &doBreak) const {
++    UErrorCode status = U_ZERO_ERROR;
++    UText* ut = utext_clone(NULL, text, false, true, &status);
++    utext_setNativeIndex(ut, start);
++    UChar32 c = utext_current32(ut);
++    bool res = false;
++    doBreak = true;
++    while (start >= 0) {
++        if (!fSkipStartSet.contains(c)) {
++            res = (c == ZWSP);
++            break;
++        }
++        --start;
++        c = utext_previous32(ut);
++        doBreak = false;
++    }
++    utext_close(ut);
++    return res;
++}
++
++bool
++DictionaryBreakEngine::scanAfterEnd(UText *text, int32_t textEnd, int32_t& end, bool &doBreak) const {
++    UErrorCode status = U_ZERO_ERROR;
++    UText* ut = utext_clone(NULL, text, false, true, &status);
++    utext_setNativeIndex(ut, end);
++    UChar32 c = utext_current32(ut);
++    bool res = false;
++    doBreak = !fNBeforeSet.contains(c);
++    while (end < textEnd) {
++        if (!fSkipEndSet.contains(c)) {
++            res = (c == ZWSP);
++            break;
++        }
++        ++end;
++        c = utext_next32(ut);
++        doBreak = false;
++    }
++    utext_close(ut);
++    return res;
++}
++
++void
++DictionaryBreakEngine::scanBackClusters(UText *text, int32_t textStart, int32_t& start) const {
++    UChar32 c = 0;
++    start = utext_getNativeIndex(text);
++    while (start > textStart) {
++        c = utext_previous32(text);
++        --start;
++        if (!fSkipEndSet.contains(c))
++            break;
++    }
++    for (int i = 0; i < clusterLimit; ++i) { // scan backwards clusterLimit clusters
++        while (start > textStart) {
++            while (fIgnoreSet.contains(c))
++                c = utext_previous32(text);
++            if (!fMarkSet.contains(c)) {
++                if (fBaseSet.contains(c)) {
++                    c = utext_previous32(text);
++                    if (!fViramaSet.contains(c)) { // Virama (e.g. coeng) preceding base. Treat sequence as a mark
++                        utext_next32(text);
++                        c = utext_current32(text);
++                        break;
++                    } else {
++                        --start;
++                    }
++                } else {
++                    break;
++                }
++            }
++            c = utext_previous32(text);
++            --start;
++        }
++        if (!fBaseSet.contains(c) || start < textStart) {  // not a cluster start so finish
++            break;
++        }
++        c = utext_previous32(text);
++        --start;        // go round again
++    }                   // ignore hitting previous inhibitor since scanning for it should have found us!
++    ++start;            // counteract --before
++}
++
++void
++DictionaryBreakEngine::scanFwdClusters(UText *text, int32_t textEnd, int32_t& end) const {
++    UChar32 c = utext_current32(text);
++    end = utext_getNativeIndex(text);
++    while (end < textEnd) {
++        if (!fSkipStartSet.contains(c))
++            break;
++        utext_next32(text);
++        c = utext_current32(text);
++        ++end;
++    }
++    for (int i = 0; i < clusterLimit; ++i) { // scan forwards clusterLimit clusters
++        while (fIgnoreSet.contains(c)) {
++            utext_next32(text);
++            c = utext_current32(text);
++        }
++        if (fBaseSet.contains(c)) {
++            while (end < textEnd) {
++                utext_next32(text);
++                c = utext_current32(text);
++                ++end;
++                if (!fMarkSet.contains(c))
++                    break;
++                else if (fViramaSet.contains(c)) {  // handle coeng + base as mark
++                    utext_next32(text);
++                    c = utext_current32(text);
++                    ++end;
++                    if (!fBaseSet.contains(c))
++                        break;
++                }
++            }
++        } else {
++            --end;    // bad char so break after char before it
++            break;
++        }
++    }
++}
++
++bool
++DictionaryBreakEngine::scanWJ(UText *text, int32_t &start, int32_t end, int32_t &before, int32_t &after) const {
++    UErrorCode status = U_ZERO_ERROR;
++    UText* ut = utext_clone(NULL, text, false, true, &status);
++    int32_t nat = start;
++    utext_setNativeIndex(ut, nat);
++    bool foundFirst = true;
++    int32_t curr = start;
++    while (nat < end) {
++        UChar32 c = utext_current32(ut);
++        if (c == ZWSP || c == WJ) {
++            curr = nat + 1;
++            if (foundFirst)     // only scan backwards for first inhibitor
++                scanBackClusters(ut, start, before);
++            foundFirst = false; // don't scan backwards if we go around again. Also marks found something
++
++            utext_next32(ut);
++            scanFwdClusters(ut, end, after);
++            nat = after + 1;
++
++            if (c == ZWSP || c == WJ) {  // did we hit another one?
++                continue;
++            } else {
++                break;
++            }
++        }
++
++        ++nat;                  // keep hunting
++        utext_next32(ut);
++    }
++
++    utext_close(ut);
++
++    if (nat >= end && foundFirst) {
++        start = before = after = nat;
++        return false;           // failed to find anything
++    }
++    else {
++        start = curr;
++    }
++    return true;                // yup hit one
+ }
+ 
+ /*
+@@ -114,7 +289,7 @@
+     ~PossibleWord() {}
+   
+     // Fill the list of candidates if needed, select the longest, and return the number found
+-    int32_t   candidates( UText *text, DictionaryMatcher *dict, int32_t rangeEnd );
++    int32_t   candidates( UText *text, DictionaryMatcher *dict, int32_t rangeEnd, UnicodeSet const *ignoreSet = NULL, int32_t minLength = 0 );
+   
+     // Select the currently marked candidate, point after it in the text, and invalidate self
+     int32_t   acceptMarked( UText *text );
+@@ -135,12 +310,12 @@
+ };
+ 
+ 
+-int32_t PossibleWord::candidates( UText *text, DictionaryMatcher *dict, int32_t rangeEnd ) {
++int32_t PossibleWord::candidates( UText *text, DictionaryMatcher *dict, int32_t rangeEnd, UnicodeSet const *ignoreSet, int32_t minLength) {
+     // TODO: If getIndex is too slow, use offset < 0 and add discardAll()
+     int32_t start = static_cast<int32_t>(utext_getNativeIndex(text));
+     if (start != offset) {
+         offset = start;
+-        count = dict->matches(text, rangeEnd-start, UPRV_LENGTHOF(cuLengths), cuLengths, cpLengths, nullptr, &prefix);
++        count = dict->matches(text, rangeEnd-start, UPRV_LENGTHOF(cuLengths), cuLengths, cpLengths, nullptr, &prefix, ignoreSet, minLength);
+         // Dictionary leaves text after longest prefix, not longest word. Back up.
+         if (count <= 0) {
+             utext_setNativeIndex(text, start);
+@@ -814,53 +989,30 @@
+  * KhmerBreakEngine
+  */
+ 
+-// How many words in a row are "good enough"?
+-static const int32_t KHMER_LOOKAHEAD = 3;
+-
+-// Will not combine a non-word with a preceding dictionary word longer than this
+-static const int32_t KHMER_ROOT_COMBINE_THRESHOLD = 3;
+-
+-// Will not combine a non-word that shares at least this much prefix with a
+-// dictionary word, with a preceding word
+-static const int32_t KHMER_PREFIX_COMBINE_THRESHOLD = 3;
+-
+-// Minimum word size
+-static const int32_t KHMER_MIN_WORD = 2;
+-
+-// Minimum number of characters for two words
+-static const int32_t KHMER_MIN_WORD_SPAN = KHMER_MIN_WORD * 2;
+-
+ KhmerBreakEngine::KhmerBreakEngine(DictionaryMatcher *adoptDictionary, UErrorCode &status)
+-    : DictionaryBreakEngine(),
++    : DictionaryBreakEngine((1 << UBRK_WORD) | (1 << UBRK_LINE)),
+       fDictionary(adoptDictionary)
+ {
+     UTRACE_ENTRY(UTRACE_UBRK_CREATE_BREAK_ENGINE);
+     UTRACE_DATA1(UTRACE_INFO, "dictbe=%s", "Khmr");
+-    UnicodeSet khmerWordSet(UnicodeString(u"[[:Khmr:]&[:LineBreak=SA:]]"), status);
++
++    clusterLimit = 3;
++
++    UnicodeSet khmerWordSet(UnicodeString(u"[[:Khmr:]\\u2060\\u200C\\u200D]"), status);
+     if (U_SUCCESS(status)) {
+         setCharacters(khmerWordSet);
+     }
+     fMarkSet.applyPattern(UnicodeString(u"[[:Khmr:]&[:LineBreak=SA:]&[:M:]]"), status);
+-    fMarkSet.add(0x0020);
+-    fEndWordSet = khmerWordSet;
+-    fBeginWordSet.add(0x1780, 0x17B3);
+-    //fBeginWordSet.add(0x17A3, 0x17A4);      // deprecated vowels
+-    //fEndWordSet.remove(0x17A5, 0x17A9);     // Khmer independent vowels that can't end a word
+-    //fEndWordSet.remove(0x17B2);             // Khmer independent vowel that can't end a word
+-    fEndWordSet.remove(0x17D2);             // KHMER SIGN COENG that combines some following characters
+-    //fEndWordSet.remove(0x17B6, 0x17C5);     // Remove dependent vowels
+-//    fEndWordSet.remove(0x0E31);             // MAI HAN-AKAT
+-//    fEndWordSet.remove(0x0E40, 0x0E44);     // SARA E through SARA AI MAIMALAI
+-//    fBeginWordSet.add(0x0E01, 0x0E2E);      // KO KAI through HO NOKHUK
+-//    fBeginWordSet.add(0x0E40, 0x0E44);      // SARA E through SARA AI MAIMALAI
+-//    fSuffixSet.add(THAI_PAIYANNOI);
+-//    fSuffixSet.add(THAI_MAIYAMOK);
++    fIgnoreSet.add(0x2060);         // WJ
++    fIgnoreSet.add(0x200C, 0x200D); // ZWJ, ZWNJ
++    fBaseSet.applyPattern(UnicodeString(u"[[:Khmr:]&[:lb=SA:]&[:^M:]]"), status);
++    fPuncSet.applyPattern(UnicodeString(u"[\\u17D4\\u17D5\\u17D6\\u17D7\\u17D9:]"), status);
+ 
+     // Compact for caching.
+     fMarkSet.compact();
+-    fEndWordSet.compact();
+-    fBeginWordSet.compact();
+-//    fSuffixSet.compact();
++    fIgnoreSet.compact();
++    fBaseSet.compact();
++    fPuncSet.compact();
+     UTRACE_EXIT_STATUS(status);
+ }
+ 
+@@ -876,175 +1028,205 @@
+                                                 UBool /* isPhraseBreaking */,
+                                                 UErrorCode& status ) const {
+     if (U_FAILURE(status)) return 0;
+-    if ((rangeEnd - rangeStart) < KHMER_MIN_WORD_SPAN) {
+-        return 0;       // Not enough characters for two words
+-    }
+-
+-    uint32_t wordsFound = 0;
+-    int32_t cpWordLength = 0;
+-    int32_t cuWordLength = 0;
+-    int32_t current;
+-    PossibleWord words[KHMER_LOOKAHEAD];
++    uint32_t wordsFound = foundBreaks.size();
++    int32_t before = 0;
++    int32_t after = 0;
++    int32_t finalBefore = 0;
++    int32_t initAfter = 0;
++    int32_t scanStart = rangeStart;
++    int32_t scanEnd = rangeEnd;
++
++    bool startZwsp = false;
++    bool breakStart = false;
++    bool breakEnd = false;
++
++    if (rangeStart > 0) {
++        --scanStart;
++        startZwsp = scanBeforeStart(text, scanStart, breakStart);
++    }
+ 
+     utext_setNativeIndex(text, rangeStart);
+-
+-    while (U_SUCCESS(status) && (current = static_cast<int32_t>(utext_getNativeIndex(text))) < rangeEnd) {
+-        cuWordLength = 0;
+-        cpWordLength = 0;
+-
+-        // Look for candidate words at the current position
+-        int32_t candidates = words[wordsFound%KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd);
+-
+-        // If we found exactly one, use that
+-        if (candidates == 1) {
+-            cuWordLength = words[wordsFound % KHMER_LOOKAHEAD].acceptMarked(text);
+-            cpWordLength = words[wordsFound % KHMER_LOOKAHEAD].markedCPLength();
+-            wordsFound += 1;
+-        }
+-
+-        // If there was more than one, see which one can take us forward the most words
+-        else if (candidates > 1) {
+-            // If we're already at the end of the range, we're done
+-            if (static_cast<int32_t>(utext_getNativeIndex(text)) >= rangeEnd) {
+-                goto foundBest;
+-            }
+-            do {
+-                if (words[(wordsFound + 1) % KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd) > 0) {
+-                    // Followed by another dictionary word; mark first word as a good candidate
+-                    words[wordsFound % KHMER_LOOKAHEAD].markCurrent();
+-
+-                    // If we're already at the end of the range, we're done
+-                    if (static_cast<int32_t>(utext_getNativeIndex(text)) >= rangeEnd) {
+-                        goto foundBest;
+-                    }
+-
+-                    // See if any of the possible second words is followed by a third word
+-                    do {
+-                        // If we find a third word, stop right away
+-                        if (words[(wordsFound + 2) % KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd)) {
+-                            words[wordsFound % KHMER_LOOKAHEAD].markCurrent();
+-                            goto foundBest;
++    scanFwdClusters(text, rangeEnd, initAfter);
++    bool endZwsp = scanAfterEnd(text, utext_nativeLength(text), scanEnd, breakEnd);
++    utext_setNativeIndex(text, rangeEnd - 1);
++    scanBackClusters(text, rangeStart, finalBefore);
++    if (finalBefore < initAfter) {   // the whole run is tented so no breaks
++        if (breakStart || fTypes < UBRK_LINE)
++            foundBreaks.push(rangeStart, status);
++        if (breakEnd || fTypes < UBRK_LINE)
++            foundBreaks.push(rangeEnd, status);
++        return foundBreaks.size() - wordsFound;
++    }
++
++    scanStart = rangeStart;
++    scanWJ(text, scanStart, rangeEnd, before, after);
++    if (startZwsp || initAfter >= before) {
++        after = initAfter;
++        before = 0;
++    }
++    if (!endZwsp && after > finalBefore && after < rangeEnd)
++        endZwsp = true;
++    if (endZwsp && before > finalBefore)
++        before = finalBefore;
++
++    utext_setNativeIndex(text, rangeStart);
++    int32_t numCodePts = rangeEnd - rangeStart;
++    // bestSnlp[i] is the snlp of the best segmentation of the first i
++    // code points in the range to be matched.
++    UVector32 bestSnlp(numCodePts + 1, status);
++    bestSnlp.addElement(0, status);
++    for(int32_t i = 1; i <= numCodePts; i++) {
++        bestSnlp.addElement(kuint32max, status);
++    }
++
++    // prev[i] is the index of the last code point in the previous word in
++    // the best segmentation of the first i characters. Note negative implies
++	// that the code point is part of an unknown word.
++    UVector32 prev(numCodePts + 1, status);
++    for(int32_t i = 0; i <= numCodePts; i++) {
++        prev.addElement(kuint32max, status);
++    }
++
++    const int32_t maxWordSize = 20;
++    UVector32 values(maxWordSize, status);
++    values.setSize(maxWordSize);
++    UVector32 lengths(maxWordSize, status);
++    lengths.setSize(maxWordSize);
++
++    // Dynamic programming to find the best segmentation.
++
++    // In outer loop, i  is the code point index,
++    //                ix is the corresponding string (code unit) index.
++    //    They differ when the string contains supplementary characters.
++    int32_t ix = rangeStart;
++    for (int32_t i = 0;  i < numCodePts;  ++i, utext_setNativeIndex(text, ++ix)) {
++        if ((uint32_t)bestSnlp.elementAti(i) == kuint32max) {
++            continue;
++        }
++
++        int32_t count;
++        count = fDictionary->matches(text, numCodePts - i, maxWordSize,
++                             NULL, lengths.getBuffer(), values.getBuffer(), NULL, &fIgnoreSet, 2);
++                             // Note: lengths is filled with code point lengths
++                             //       The NULL parameter is the ignored code unit lengths.
++
++        for (int32_t j = 0; j < count; j++) {
++            int32_t ln = lengths.elementAti(j);
++            if (ln + i >= numCodePts)
++                continue;
++            utext_setNativeIndex(text, ln+ix);
++            int32_t c = utext_current32(text);
++            if (fMarkSet.contains(c) || c == 0x17D2) { // Coeng
++                lengths.removeElementAt(j);
++                values.removeElementAt(j);
++                --j;
++                --count;
++            }
++        }
++        if (count == 0) {
++            utext_setNativeIndex(text, ix);
++            int32_t c = utext_current32(text);
++            if (fPuncSet.contains(c) || fIgnoreSet.contains(c) || c == ZWSP) {
++                values.setElementAt(0, count);
++                lengths.setElementAt(1, count++);
++            } else if (fBaseSet.contains(c)) {
++                int32_t currix = utext_getNativeIndex(text);
++                do {
++                    utext_next32(text);
++                    c = utext_current32(text);
++                    if (utext_getNativeIndex(text) >= rangeEnd)
++                        break;
++                    if (c == 0x17D2) { // Coeng
++                        utext_next32(text);
++                        c = utext_current32(text);
++                        if (!fBaseSet.contains(c) || utext_getNativeIndex(text) >= rangeEnd) {
++                            break;
++                        } else {
++                            utext_next32(text);
++                            c = utext_current32(text);
++                            if (utext_getNativeIndex(text) >= rangeEnd)
++                                break;
+                         }
+                     }
+-                    while (words[(wordsFound + 1) % KHMER_LOOKAHEAD].backUp(text));
+-                }
+-            }
+-            while (words[wordsFound % KHMER_LOOKAHEAD].backUp(text));
+-foundBest:
+-            cuWordLength = words[wordsFound % KHMER_LOOKAHEAD].acceptMarked(text);
+-            cpWordLength = words[wordsFound % KHMER_LOOKAHEAD].markedCPLength();
+-            wordsFound += 1;
+-        }
+-
+-        // We come here after having either found a word or not. We look ahead to the
+-        // next word. If it's not a dictionary word, we will combine it with the word we
+-        // just found (if there is one), but only if the preceding word does not exceed
+-        // the threshold.
+-        // The text iterator should now be positioned at the end of the word we found.
+-        if (static_cast<int32_t>(utext_getNativeIndex(text)) < rangeEnd && cpWordLength < KHMER_ROOT_COMBINE_THRESHOLD) {
+-            // if it is a dictionary word, do nothing. If it isn't, then if there is
+-            // no preceding word, or the non-word shares less than the minimum threshold
+-            // of characters with a dictionary word, then scan to resynchronize
+-            if (words[wordsFound % KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd) <= 0
+-                  && (cuWordLength == 0
+-                      || words[wordsFound % KHMER_LOOKAHEAD].longestPrefix() < KHMER_PREFIX_COMBINE_THRESHOLD)) {
+-                // Look for a plausible word boundary
+-                int32_t remaining = rangeEnd - (current+cuWordLength);
+-                UChar32 pc;
+-                UChar32 uc;
+-                int32_t chars = 0;
+-                for (;;) {
+-                    int32_t pcIndex = static_cast<int32_t>(utext_getNativeIndex(text));
+-                    pc = utext_next32(text);
+-                    int32_t pcSize = static_cast<int32_t>(utext_getNativeIndex(text)) - pcIndex;
+-                    chars += pcSize;
+-                    remaining -= pcSize;
+-                    if (remaining <= 0) {
+-                        break;
+-                    }
+-                    uc = utext_current32(text);
+-                    if (fEndWordSet.contains(pc) && fBeginWordSet.contains(uc)) {
+-                        // Maybe. See if it's in the dictionary.
+-                        int32_t num_candidates = words[(wordsFound + 1) % KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd);
+-                        utext_setNativeIndex(text, current+cuWordLength+chars);
+-                        if (num_candidates > 0) {
+-                            break;
+-                        }
+-                    }
+-                }
+-
+-                // Bump the word count if there wasn't already one
+-                if (cuWordLength <= 0) {
+-                    wordsFound += 1;
+-                }
+-
+-                // Update the length with the passed-over characters
+-                cuWordLength += chars;
+-            }
+-            else {
+-                // Back up to where we were for next iteration
+-                utext_setNativeIndex(text, current+cuWordLength);
+-            }
+-        }
+-
+-        // Never stop before a combining mark.
+-        int32_t currPos;
+-        while ((currPos = static_cast<int32_t>(utext_getNativeIndex(text))) < rangeEnd && fMarkSet.contains(utext_current32(text))) {
+-            utext_next32(text);
+-            cuWordLength += static_cast<int32_t>(utext_getNativeIndex(text)) - currPos;
+-        }
+-
+-        // Look ahead for possible suffixes if a dictionary word does not follow.
+-        // We do this in code rather than using a rule so that the heuristic
+-        // resynch continues to function. For example, one of the suffix characters
+-        // could be a typo in the middle of a word.
+-//        if ((int32_t)utext_getNativeIndex(text) < rangeEnd && wordLength > 0) {
+-//            if (words[wordsFound%KHMER_LOOKAHEAD].candidates(text, fDictionary, rangeEnd) <= 0
+-//                && fSuffixSet.contains(uc = utext_current32(text))) {
+-//                if (uc == KHMER_PAIYANNOI) {
+-//                    if (!fSuffixSet.contains(utext_previous32(text))) {
+-//                        // Skip over previous end and PAIYANNOI
+-//                        utext_next32(text);
+-//                        utext_next32(text);
+-//                        wordLength += 1;            // Add PAIYANNOI to word
+-//                        uc = utext_current32(text);     // Fetch next character
+-//                    }
+-//                    else {
+-//                        // Restore prior position
+-//                        utext_next32(text);
+-//                    }
+-//                }
+-//                if (uc == KHMER_MAIYAMOK) {
+-//                    if (utext_previous32(text) != KHMER_MAIYAMOK) {
+-//                        // Skip over previous end and MAIYAMOK
+-//                        utext_next32(text);
+-//                        utext_next32(text);
+-//                        wordLength += 1;            // Add MAIYAMOK to word
+-//                    }
+-//                    else {
+-//                        // Restore prior position
+-//                        utext_next32(text);
+-//                    }
+-//                }
+-//            }
+-//            else {
+-//                utext_setNativeIndex(text, current+wordLength);
+-//            }
+-//        }
+-
+-        // Did we find a word on this iteration? If so, push it on the break stack
+-        if (cuWordLength > 0) {
+-            foundBreaks.push((current+cuWordLength), status);
+-        }
+-    }
+-    
++                } while (fMarkSet.contains(c) || fIgnoreSet.contains(c));
++                values.setElementAt(BADSNLP, count);
++                lengths.setElementAt(utext_getNativeIndex(text) - currix, count++);
++            } else {
++                values.setElementAt(BADSNLP, count);
++                lengths.setElementAt(1, count++);
++            }
++        }
++
++        for (int32_t j = 0; j < count; j++) {
++            uint32_t v = values.elementAti(j);
++            int32_t newSnlp = bestSnlp.elementAti(i) + v;
++            int32_t ln = lengths.elementAti(j);
++            utext_setNativeIndex(text, ln+ix);
++            int32_t c = utext_current32(text);
++            while ((fPuncSet.contains(c) || fIgnoreSet.contains(c)) && ln + i < numCodePts) {
++                ++ln;
++                utext_next32(text);
++                c = utext_current32(text);
++            }
++            int32_t ln_j_i = ln + i;   // yes really i!
++            if (newSnlp < bestSnlp.elementAti(ln_j_i)) {
++                if (v == BADSNLP) {
++                    int32_t p = prev.elementAti(i);
++                    if (p < 0)
++                        prev.setElementAt(p, ln_j_i);
++                    else
++                        prev.setElementAt(-i, ln_j_i);
++                }
++                else
++                    prev.setElementAt(i, ln_j_i);
++                bestSnlp.setElementAt(newSnlp, ln_j_i);
++            }
++        }
++    }
++    // Start pushing the optimal offset index into t_boundary (t for tentative).
++    // prev[numCodePts] is guaranteed to be meaningful.
++    // We'll first push in the reverse order, i.e.,
++    // t_boundary[0] = numCodePts, and afterwards do a swap.
++    UVector32 t_boundary(numCodePts+1, status);
++
++    int32_t numBreaks = 0;
++    // No segmentation found, set boundary to end of range
++    while (numCodePts >= 0 && (uint32_t)bestSnlp.elementAti(numCodePts) == kuint32max) {
++        --numCodePts;
++    }
++    if (numCodePts < 0) {
++        t_boundary.addElement(numCodePts, status);
++        numBreaks++;
++    } else {
++        for (int32_t i = numCodePts; (uint32_t)i != kuint32max; i = prev.elementAti(i)) {
++            if (i < 0) i = -i;
++            t_boundary.addElement(i, status);
++            numBreaks++;
++        }
++        // U_ASSERT(prev.elementAti(t_boundary.elementAti(numBreaks - 1)) == 0);
++    }
++
++    // Now that we're done, convert positions in t_boundary[] (indices in
++    // the normalized input string) back to indices in the original input UText
++    // while reversing t_boundary and pushing values to foundBreaks.
++    for (int32_t i = numBreaks-1; i >= 0; i--) {
++        int32_t cpPos = t_boundary.elementAti(i);
++        if (cpPos == 0 && !breakStart && fTypes >= UBRK_LINE) continue;
++        int32_t utextPos = cpPos + rangeStart;
++        while (utextPos > after && scanWJ(text, utextPos, scanEnd, before, after));
++        if (utextPos < before) {
++        // Boundaries are added to foundBreaks output in ascending order.
++            U_ASSERT(foundBreaks.size() == 0 ||foundBreaks.peeki() < utextPos);
++            foundBreaks.push(utextPos, status);
++        }
++    }
++
+     // Don't return a break for the end of the dictionary range if there is one there.
+-    if (foundBreaks.peeki() >= rangeEnd) {
++    if (!breakEnd && fTypes >= UBRK_LINE && foundBreaks.peeki() >= rangeEnd) {
+         (void) foundBreaks.popi();
+-        wordsFound -= 1;
+-    }
+-
+-    return wordsFound;
++    }
++
++    return foundBreaks.size() - wordsFound;
+ }
+ 
+ #if !UCONFIG_NO_NORMALIZATION
+--- a/lcms2/src/cmscnvrt.c
++++ b/lcms2/src/cmscnvrt.c
+@@ -79,7 +79,7 @@
+ 
+ 
+ // Built-in intents
+-static cmsIntentsList DefaultIntents[] = {
++static const cmsIntentsList DefaultIntents[] = {
+ 
+     { INTENT_PERCEPTUAL,                            "Perceptual",                                   DefaultICCintents,            &DefaultIntents[1] },
+     { INTENT_RELATIVE_COLORIMETRIC,                 "Relative colorimetric",                        DefaultICCintents,            &DefaultIntents[2] },
+--- a/lcms2/src/cmstypes.c
++++ b/lcms2/src/cmstypes.c
+@@ -4701,7 +4701,7 @@
+ 
+ 
+ // This is the list of built-in MPE types
+-static _cmsTagTypeLinkedList SupportedMPEtypes[] = {
++static _cmsTagTypeLinkedList const SupportedMPEtypes[] = {
+ 
+ {{ (cmsTagTypeSignature) cmsSigBAcsElemType, NULL, NULL, NULL, NULL, NULL, 0 }, &SupportedMPEtypes[1] },   // Ignore those elements for now
+ {{ (cmsTagTypeSignature) cmsSigEAcsElemType, NULL, NULL, NULL, NULL, NULL, 0 }, &SupportedMPEtypes[2] },   // (That's what the spec says)
+@@ -6034,7 +6034,7 @@
+ } _cmsTagLinkedList;
+ 
+ // This is the list of built-in tags. The data of this list can be modified by plug-ins
+-static _cmsTagLinkedList SupportedTags[] = {
++static const _cmsTagLinkedList SupportedTags[] = {
+ 
+     { cmsSigAToB0Tag,               { 1, 3,  { cmsSigLut16Type,  cmsSigLutAtoBType, cmsSigLut8Type}, DecideLUTtypeA2B}, &SupportedTags[1]},
+     { cmsSigAToB1Tag,               { 1, 3,  { cmsSigLut16Type,  cmsSigLutAtoBType, cmsSigLut8Type}, DecideLUTtypeA2B}, &SupportedTags[2]},
+--- a/libepubgen/src/lib/EPUBHTMLGenerator.cpp
++++ b/libepubgen/src/lib/EPUBHTMLGenerator.cpp
+@@ -579,14 +579,9 @@
+     m_impl->m_document.openElement("title", RVNGPropertyList());
+     m_impl->m_document.closeElement("title");
+   }
+-  RVNGPropertyList metaAttrs;
+-  metaAttrs.insert("http-equiv", "content-type");
+-  metaAttrs.insert("content", "text/html; charset=UTF-8");
+-  m_impl->m_document.openElement("meta", metaAttrs);
+-  m_impl->m_document.closeElement("meta");
+   if (m_impl->m_version >= 30 && m_impl->m_layoutMethod == EPUB_LAYOUT_METHOD_FIXED)
+   {
+-    metaAttrs.clear();
++    RVNGPropertyList metaAttrs;
+     metaAttrs.insert("name", "viewport");
+     std::stringstream content;
+     if (const librevenge::RVNGProperty *pageWidth = m_impl->m_actualPageProperties["fo:page-width"])
+--- a/libjpeg-turbo/src/jcinit.c
++++ b/libjpeg-turbo/src/jcinit.c
+@@ -45,15 +45,15 @@
+       jinit_downsampler(cinfo);
+       jinit_c_prep_controller(cinfo, FALSE /* never need full buffer here */);
+     } else if (cinfo->data_precision <= 12) {
+-      j12init_color_converter(cinfo);
+-      j12init_downsampler(cinfo);
+-      j12init_c_prep_controller(cinfo,
++      jinit_color_converter(cinfo);
++      jinit_downsampler(cinfo);
++      jinit_c_prep_controller(cinfo,
+                                 FALSE /* never need full buffer here */);
+     } else {
+ #ifdef C_LOSSLESS_SUPPORTED
+-      j16init_color_converter(cinfo);
+-      j16init_downsampler(cinfo);
+-      j16init_c_prep_controller(cinfo,
++      jinit_color_converter(cinfo);
++      jinit_downsampler(cinfo);
++      jinit_c_prep_controller(cinfo,
+                                 FALSE /* never need full buffer here */);
+ #else
+       ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+@@ -67,9 +67,9 @@
+     if (cinfo->data_precision <= 8)
+       jinit_lossless_compressor(cinfo);
+     else if (cinfo->data_precision <= 12)
+-      j12init_lossless_compressor(cinfo);
++      jinit_lossless_compressor(cinfo);
+     else
+-      j16init_lossless_compressor(cinfo);
++      jinit_lossless_compressor(cinfo);
+     /* Entropy encoding: either Huffman or arithmetic coding. */
+     if (cinfo->arith_code) {
+       ERREXIT(cinfo, JERR_ARITH_NOTIMPL);
+@@ -82,10 +82,10 @@
+       jinit_c_diff_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
+                                                cinfo->optimize_coding));
+     else if (cinfo->data_precision <= 12)
+-      j12init_c_diff_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
++      jinit_c_diff_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
+                                                  cinfo->optimize_coding));
+     else
+-      j16init_c_diff_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
++      jinit_c_diff_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
+                                                  cinfo->optimize_coding));
+ #else
+     ERREXIT(cinfo, JERR_NOT_COMPILED);
+@@ -97,7 +97,7 @@
+     if (cinfo->data_precision == 8)
+       jinit_forward_dct(cinfo);
+     else if (cinfo->data_precision == 12)
+-      j12init_forward_dct(cinfo);
++      jinit_forward_dct(cinfo);
+     else
+       ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+     /* Entropy encoding: either Huffman or arithmetic coding. */
+@@ -120,7 +120,7 @@
+ 
+     /* Need a full-image coefficient buffer in any multi-pass mode. */
+     if (cinfo->data_precision == 12)
+-      j12init_c_coef_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
++      jinit_c_coef_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
+                                                  cinfo->optimize_coding));
+     else
+       jinit_c_coef_controller(cinfo, (boolean)(cinfo->num_scans > 1 ||
+@@ -133,10 +133,10 @@
+   if (cinfo->data_precision <= 8)
+     jinit_c_main_controller(cinfo, FALSE /* never need full buffer here */);
+   else if (cinfo->data_precision <= 12)
+-    j12init_c_main_controller(cinfo, FALSE /* never need full buffer here */);
++    jinit_c_main_controller(cinfo, FALSE /* never need full buffer here */);
+   else
+ #ifdef C_LOSSLESS_SUPPORTED
+-    j16init_c_main_controller(cinfo, FALSE /* never need full buffer here */);
++    jinit_c_main_controller(cinfo, FALSE /* never need full buffer here */);
+ #else
+     ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+ #endif
+--- a/libjpeg-turbo/src/jdmaster.c
++++ b/libjpeg-turbo/src/jdmaster.c
+@@ -575,7 +575,7 @@
+       if (cinfo->data_precision == 8)
+         jinit_1pass_quantizer(cinfo);
+       else if (cinfo->data_precision == 12)
+-        j12init_1pass_quantizer(cinfo);
++        jinit_1pass_quantizer(cinfo);
+       else
+         ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+       master->quantizer_1pass = cinfo->cquantize;
+@@ -590,7 +590,7 @@
+       if (cinfo->data_precision == 8)
+         jinit_2pass_quantizer(cinfo);
+       else if (cinfo->data_precision == 12)
+-        j12init_2pass_quantizer(cinfo);
++        jinit_2pass_quantizer(cinfo);
+       else
+         ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+       master->quantizer_2pass = cinfo->cquantize;
+@@ -610,7 +610,7 @@
+       if (cinfo->data_precision == 8)
+         jinit_merged_upsampler(cinfo); /* does color conversion too */
+       else if (cinfo->data_precision == 12)
+-        j12init_merged_upsampler(cinfo); /* does color conversion too */
++        jinit_merged_upsampler(cinfo); /* does color conversion too */
+       else
+         ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+ #else
+@@ -621,12 +621,12 @@
+         jinit_color_deconverter(cinfo);
+         jinit_upsampler(cinfo);
+       } else if (cinfo->data_precision <= 12) {
+-        j12init_color_deconverter(cinfo);
+-        j12init_upsampler(cinfo);
++        jinit_color_deconverter(cinfo);
++        jinit_upsampler(cinfo);
+       } else {
+ #ifdef D_LOSSLESS_SUPPORTED
+-        j16init_color_deconverter(cinfo);
+-        j16init_upsampler(cinfo);
++        jinit_color_deconverter(cinfo);
++        jinit_upsampler(cinfo);
+ #else
+         ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+ #endif
+@@ -635,10 +635,10 @@
+     if (cinfo->data_precision <= 8)
+       jinit_d_post_controller(cinfo, cinfo->enable_2pass_quant);
+     else if (cinfo->data_precision <= 12)
+-      j12init_d_post_controller(cinfo, cinfo->enable_2pass_quant);
++      jinit_d_post_controller(cinfo, cinfo->enable_2pass_quant);
+     else
+ #ifdef D_LOSSLESS_SUPPORTED
+-      j16init_d_post_controller(cinfo, cinfo->enable_2pass_quant);
++      jinit_d_post_controller(cinfo, cinfo->enable_2pass_quant);
+ #else
+       ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+ #endif
+@@ -652,9 +652,9 @@
+     if (cinfo->data_precision <= 8)
+       jinit_lossless_decompressor(cinfo);
+     else if (cinfo->data_precision <= 12)
+-      j12init_lossless_decompressor(cinfo);
++      jinit_lossless_decompressor(cinfo);
+     else
+-      j16init_lossless_decompressor(cinfo);
++      jinit_lossless_decompressor(cinfo);
+     /* Entropy decoding: either Huffman or arithmetic coding. */
+     if (cinfo->arith_code) {
+       ERREXIT(cinfo, JERR_ARITH_NOTIMPL);
+@@ -668,9 +668,9 @@
+     if (cinfo->data_precision <= 8)
+       jinit_d_diff_controller(cinfo, use_c_buffer);
+     else if (cinfo->data_precision <= 12)
+-      j12init_d_diff_controller(cinfo, use_c_buffer);
++      jinit_d_diff_controller(cinfo, use_c_buffer);
+     else
+-      j16init_d_diff_controller(cinfo, use_c_buffer);
++      jinit_d_diff_controller(cinfo, use_c_buffer);
+ #else
+     ERREXIT(cinfo, JERR_NOT_COMPILED);
+ #endif
+@@ -681,7 +681,7 @@
+     if (cinfo->data_precision == 8)
+       jinit_inverse_dct(cinfo);
+     else if (cinfo->data_precision == 12)
+-      j12init_inverse_dct(cinfo);
++      jinit_inverse_dct(cinfo);
+     else
+       ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+     /* Entropy decoding: either Huffman or arithmetic coding. */
+@@ -706,7 +706,7 @@
+     use_c_buffer = cinfo->inputctl->has_multiple_scans ||
+                    cinfo->buffered_image;
+     if (cinfo->data_precision == 12)
+-      j12init_d_coef_controller(cinfo, use_c_buffer);
++      jinit_d_coef_controller(cinfo, use_c_buffer);
+     else
+       jinit_d_coef_controller(cinfo, use_c_buffer);
+ #else
+@@ -718,11 +718,11 @@
+     if (cinfo->data_precision <= 8)
+       jinit_d_main_controller(cinfo, FALSE /* never need full buffer here */);
+     else if (cinfo->data_precision <= 12)
+-      j12init_d_main_controller(cinfo,
++      jinit_d_main_controller(cinfo,
+                                 FALSE /* never need full buffer here */);
+     else
+ #ifdef D_LOSSLESS_SUPPORTED
+-      j16init_d_main_controller(cinfo,
++      jinit_d_main_controller(cinfo,
+                                 FALSE /* never need full buffer here */);
+ #else
+       ERREXIT1(cinfo, JERR_BAD_PRECISION, cinfo->data_precision);
+--- a/libjpeg-turbo/src/jdtrans.c
++++ b/libjpeg-turbo/src/jdtrans.c
+@@ -131,7 +131,7 @@
+ 
+   /* Always get a full-image coefficient buffer. */
+   if (cinfo->data_precision == 12)
+-    j12init_d_coef_controller(cinfo, TRUE);
++    jinit_d_coef_controller(cinfo, TRUE);
+   else
+     jinit_d_coef_controller(cinfo, TRUE);
+ 
+--- a/libnumbertext/src/Numbertext.cxx
++++ b/libnumbertext/src/Numbertext.cxx
+@@ -6,6 +6,10 @@
+ #include <locale>
+ #include <sstream>
+ #include <fstream>
++
++#ifdef _WIN32
++#include <Windows.h>
++#endif
+ 
+ #include "Numbertext.hxx"
+ 
+@@ -22,13 +26,33 @@
+ 
+ bool readfile(const std::string& filename, std::wstring& result)
+ {
++#ifdef _WIN32
++    // First try to convert from UTF-8
++    std::ifstream ifs(Numbertext::string2wstring(filename));
++    // Fallback to ACP string for backward compatibility
++    if (ifs.fail())
++        ifs.open(filename);
++    if (ifs.fail())
++        return false;
++    std::stringstream ss;
++    ss << ifs.rdbuf();
++    result = Numbertext::string2wstring(ss.str());
++#else
+     std::wifstream wif(filename);
+     if (wif.fail())
+         return false;
++#if defined __GNUC__
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
++#endif
+     wif.imbue(std::locale(std::locale(), new std::codecvt_utf8<wchar_t>));
++#if defined __GNUC__
++#pragma GCC diagnostic pop
++#endif
+     std::wstringstream wss;
+     wss << wif.rdbuf();
+     result = wss.str();
++#endif
+     return true;
+ }
+ 
+@@ -99,9 +123,21 @@
+ 
+ std::wstring Numbertext::string2wstring(const std::string& s)
+ {
+-#ifndef NUMBERTEXT_BOOST
++#ifdef _WIN32
++    int nSize = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
++    std::unique_ptr<wchar_t[]> wstr(new wchar_t[nSize]);
++    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, wstr.get(), nSize);
++    return wstr.get();
++#elif !defined NUMBERTEXT_BOOST
++#if defined __GNUC__
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
++#endif
+     typedef std::codecvt_utf8<wchar_t> convert_type;
+     std::wstring_convert<convert_type, wchar_t> converter;
++#if defined __GNUC__
++#pragma GCC diagnostic pop
++#endif
+     return converter.from_bytes( s );
+ #else
+     return ::locale::conv::utf_to_utf<wchar_t>(s.c_str(), s.c_str() + s.size());
+@@ -110,7 +146,15 @@
+ 
+ std::string Numbertext::wstring2string(const std::wstring& s)
+ {
+-#ifndef NUMBERTEXT_BOOST
++#ifdef _WIN32
++    int nSize = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, nullptr, 0, nullptr, nullptr);
++    std::unique_ptr<char[]> str(new char[nSize]);
++    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, str.get(), nSize, nullptr, nullptr);
++    return str.get();
++#elif !defined NUMBERTEXT_BOOST
++#if defined __GNUC__
++#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
++#endif
+     typedef std::codecvt_utf8<wchar_t> convert_type;
+     std::wstring_convert<convert_type, wchar_t> converter;
+     return converter.to_bytes( s );
+--- a/libodfgen/src/PageSpan.cxx
++++ b/libodfgen/src/PageSpan.cxx
+@@ -145,7 +145,7 @@
+ 
+ 	for (int j=0; j<2; ++j)
+ 	{
+-		char const *wh[]= {"librevenge:header", "librevenge:footer"};
++		static char const* const wh[]= {"librevenge:header", "librevenge:footer"};
+ 		if (!mpPropList.child(wh[j]) || mpPropList.child(wh[j])->count()!=1)
+ 			continue;
+ 		pHandler->startElement(j==0 ? "style:header-style" : "style:footer-style", librevenge::RVNGPropertyList());
+@@ -407,7 +407,7 @@
+ 	}
+ 	for (int j=0; j<3; ++j)
+ 	{
+-		char const *wh[]= {"librevenge:footnote", "librevenge:header", "librevenge:footer"};
++		static char const* const wh[]= {"librevenge:footnote", "librevenge:header", "librevenge:footer"};
+ 		if (propList.child(wh[j]))
+ 			layoutList.insert(wh[j], *propList.child(wh[j]));
+ 	}
+--- a/libodfgen/src/FillManager.cxx
++++ b/libodfgen/src/FillManager.cxx
+@@ -115,7 +115,7 @@
+ 	if (!gradient)
+ 		gradient = style.child("svg:radialGradient");
+ 	if (gradient) pList.insert("svg:linearGradient", *gradient);
+-	char const *wh[] =
++	static char const* const wh[] =
+ 	{
+ 		"draw:border", "draw:cx", "draw:cy", "draw:end-color", "draw:end-intensity",
+ 		"draw:start-color", "draw:start-intensity", "draw:style"
+@@ -163,7 +163,7 @@
+ 
+ 	if (!gradient || !gradient->count())
+ 	{
+-		char const *attrib[] =
++		static char const* const attrib[] =
+ 		{
+ 			"draw:start-color", "draw:end-color", "draw:border", "draw:start-intensity", "draw:end-intensity"
+ 		};
+@@ -205,7 +205,7 @@
+ 	bool isStyle=style["style:display-name"]!=nullptr;
+ 	bool hasParent=style["librevenge:parent-display-name"]!=nullptr;
+ 	// basic data
+-	char const *wh[] = { "draw:color", "draw:distance", "draw:rotation", "draw:style" };
++	static char const* const wh[] = { "draw:color", "draw:distance", "draw:rotation", "draw:style" };
+ 	for (auto &i : wh)
+ 	{
+ 		if (style[i])
+@@ -306,7 +306,7 @@
+ 		pList.insert("draw:angle", angleValue);
+ 	}
+ 	// basic data
+-	char const *wh[] = { "draw:border", "draw:cx", "draw:cy"	};
++	static char const* const wh[] = { "draw:border", "draw:cx", "draw:cy" };
+ 	for (auto &i : wh)
+ 	{
+ 		if (style[i])
+--- a/libodfgen/src/GraphicFunctions.cxx
++++ b/libodfgen/src/GraphicFunctions.cxx
+@@ -59,6 +59,10 @@
+                           double rx, double ry, double phi, bool largeArc, bool sweep, double x, double y,
+                           double &xmin, double &ymin, double &xmax, double &ymax)
+ {
++	if (x0 == x && y0 == y) {
++		return;
++	}
++
+ 	phi *= M_PI/180;
+ 	if (rx < 0.0)
+ 		rx *= -1.0;
+--- a/libodfgen/src/OdfGenerator.cxx
++++ b/libodfgen/src/OdfGenerator.cxx
+@@ -33,6 +33,7 @@
+ #include <math.h>
+ 
+ #include <cctype>
++#include <cstdint>
+ #include <limits>
+ #include <memory>
+ #include <string>
+@@ -393,7 +394,7 @@
+ 		if (child["librevenge:type"]->getStr()=="table:calculation-settings")
+ 		{
+ 			auto calcSetting=std::make_shared<TagOpenElement>("table:calculation-settings");
+-			char const *wh[]= { "table:automatic-find-labels", "table:case-sensitive", "table:null-year",
++			char const* const wh[]= { "table:automatic-find-labels", "table:case-sensitive", "table:null-year",
+ 			                    "table:precision-as-shown", "table:search-criteria-must-apply-to-whole-cell",
+ 			                    "table:use-regular-expressions", "table:use-wildcards"
+ 			                  };
+@@ -662,7 +663,7 @@
+ 
+ void OdfGenerator::addFrameProperties(const librevenge::RVNGPropertyList &propList, TagOpenElement &element) const
+ {
+-	static char const *frameAttrib[] =
++	static char const* const frameAttrib[] =
+ 	{
+ 		"draw:z-index",
+ 		"fo:max-width", "fo:max-height",
+@@ -801,7 +802,7 @@
+ 	// add the default layers
+ 	for (int i=0; i<5; ++i)
+ 	{
+-		static char const *defaults[] = {"layout", "background", "backgroundobjects", "controls", "measurelines"};
++		static char const* const defaults[] = {"layout", "background", "backgroundobjects", "controls", "measurelines"};
+ 		if (mLayerNameSet.find(defaults[i])!=mLayerNameSet.end())
+ 			continue;
+ 		layer.addAttribute("draw:name", defaults[i]);
+@@ -870,7 +871,7 @@
+ 	{
+ 		for (int i=0; i<2; ++i)
+ 		{
+-			char const *wh[]= {"text:display", "text:outline-level"};
++			char const* const wh[]= {"text:display", "text:outline-level"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], propList[wh[i]]->getStr());
+ 		}
+@@ -879,7 +880,7 @@
+ 	{
+ 		for (int i=0; i<4; ++i)
+ 		{
+-			char const *wh[]= {"text:condition", "text:current-value", "text:string-value-if-false", "text:string-value-if-true"};
++			char const* const wh[]= {"text:condition", "text:current-value", "text:string-value-if-false", "text:string-value-if-true"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -930,7 +931,7 @@
+ 	{
+ 		for (int i=0; i<2; ++i)
+ 		{
+-			char const *wh[]= {"text:condition", "text:is-hidden"};
++			char const* const wh[]= {"text:condition", "text:is-hidden"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -939,7 +940,7 @@
+ 	{
+ 		for (int i=0; i<2; ++i)
+ 		{
+-			char const *wh[]= {"text:description", "text:placeholder-type"};
++			char const* const wh[]= {"text:description", "text:placeholder-type"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -949,7 +950,7 @@
+ 	{
+ 		for (int i=0; i<1; ++i)
+ 		{
+-			char const *wh[]= {"text:name"};
++			char const* const wh[]= {"text:name"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -958,7 +959,7 @@
+ 	{
+ 		for (int i=0; i<2; ++i)
+ 		{
+-			char const *wh[]= {"text:reference-format", "text:ref-name"};
++			char const* const wh[]= {"text:reference-format", "text:ref-name"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -967,7 +968,7 @@
+ 	{
+ 		for (int i=0; i<3; ++i)
+ 		{
+-			char const *wh[]= {"text:formula", "text:name", "text:ref-name"};
++			char const* const wh[]= {"text:formula", "text:name", "text:ref-name"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -976,7 +977,7 @@
+ 	{
+ 		for (int i=0; i<1; ++i)
+ 		{
+-			char const *wh[]= {"text:description"};
++			char const* const wh[]= {"text:description"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -985,7 +986,7 @@
+ 	{
+ 		for (int i=0; i<3; ++i)
+ 		{
+-			char const *wh[]= {"office:string-value", "office:value", "text:name"};
++			char const* const wh[]= {"office:string-value", "office:value", "text:name"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -994,7 +995,7 @@
+ 	{
+ 		for (int i=0; i<2; ++i)
+ 		{
+-			char const *wh[]= {"text:display", "text:name"};
++			char const* const wh[]= {"text:display", "text:name"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -1003,7 +1004,7 @@
+ 	{
+ 		for (int i=0; i<5; ++i)
+ 		{
+-			char const *wh[]= {"text:formula", "text:name", "office:string-value", "office:value", "office:value-type"};
++			char const* const wh[]= {"text:formula", "text:name", "office:string-value", "office:value", "office:value-type"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -1013,7 +1014,7 @@
+ 	{
+ 		for (int i=0; i<4; ++i)
+ 		{
+-			char const *wh[]= {"text:column-name", "text:database-name", "text:table-name", "text:table-type"};
++			char const* const wh[]= {"text:column-name", "text:database-name", "text:table-name", "text:table-type"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -1022,7 +1023,7 @@
+ 	{
+ 		for (int i=0; i<3; ++i)
+ 		{
+-			char const *wh[]= {"text:database-name", "text:table-name", "text:table-type"};
++			char const* const wh[]= {"text:database-name", "text:table-name", "text:table-type"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -1031,7 +1032,7 @@
+ 	{
+ 		for (int i=0; i<5; ++i)
+ 		{
+-			char const *wh[]= {"text:condition", "text:database-name", "text:row-number", "text:table-name", "text:table-type"};
++			char const* const wh[]= {"text:condition", "text:database-name", "text:row-number", "text:table-name", "text:table-type"};
+ 			if (propList[wh[i]])
+ 				openElement->addAttribute(wh[i], librevenge::RVNGString::escapeXML(propList[wh[i]]->getStr()));
+ 		}
+@@ -1616,7 +1617,7 @@
+ 	// check that no default are set, there will can be set with mGraphicStyle, if needed
+ 	for (int i=0; i<3; ++i)
+ 	{
+-		char const *wh[]= {"draw:fill","draw:shadow","draw:stroke"};
++		char const* const wh[]= {"draw:fill","draw:shadow","draw:stroke"};
+ 		if (!shapeList[wh[i]] && styleList[wh[i]])
+ 			styleList.remove(wh[i]);
+ 	}
+@@ -1650,7 +1651,7 @@
+ 	pDrawEllipseElement->addAttribute("svg:height", sValue);
+ 	for (int i=0; i<4; ++i)
+ 	{
+-		char const *wh[]= {"draw:kind", "draw:start-angle", "draw:end-angle", "draw:transform"};
++		char const* const wh[]= {"draw:kind", "draw:start-angle", "draw:end-angle", "draw:transform"};
+ 		if (propList[wh[i]])
+ 			pDrawEllipseElement->addAttribute(wh[i], propList[wh[i]]->getStr());
+ 	}
+--- a/libodfgen/src/OdgGenerator.cxx
++++ b/libodfgen/src/OdgGenerator.cxx
+@@ -709,7 +709,7 @@
+ 		if (propList["svg:height"])
+ 			pDrawFrameOpenElement->addAttribute("svg:height", propList["svg:height"]->getStr());
+ 	}
+-	static char const *attrib[]=
++	static char const* const attrib[]=
+ 	{
+ 		"draw:z-index",
+ 		"fo:min-width", "fo:min-height", "fo:max-width", "fo:max-height", "fo:padding-top", "fo:padding-bottom",
+--- a/libtiff/libtiff/tif_ojpeg.c
++++ b/libtiff/libtiff/tif_ojpeg.c
+@@ -1305,6 +1305,34 @@
+     return (1);
+ }
+ 
++// see also vcl/source/filter/jpeg/jpegc.cxx
++static void emitMessage(j_common_ptr cinfo, int msg_level)
++{
++    if (msg_level < 0)
++    {
++        // https://libjpeg-turbo.org/pmwiki/uploads/About/TwoIssueswiththeJPEGStandard.pdf
++        // try to retain some degree of recoverability up to some reasonable
++        // limit (initially using ImageMagick's current limit of 1000), then
++        // bail.
++        const int WarningLimit = 1000;
++#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
++        // ofz#50452 due to Timeouts, just abandon fuzzing on any
++        // JWRN_NOT_SEQUENTIAL
++        if (cinfo->err->msg_code == JWRN_NOT_SEQUENTIAL)
++        {
++            cinfo->err->error_exit(cinfo);
++            return;
++        }
++#endif
++        if (++cinfo->err->num_warnings > WarningLimit)
++            cinfo->err->error_exit(cinfo);
++        else
++            cinfo->err->output_message(cinfo);
++    }
++    else if (cinfo->err->trace_level >= msg_level)
++        cinfo->err->output_message(cinfo);
++}
++
+ static int OJPEGWriteHeaderInfo(TIFF *tif)
+ {
+     static const char module[] = "OJPEGWriteHeaderInfo";
+@@ -1320,6 +1348,7 @@
+     sp->libjpeg_jpeg_error_mgr.output_message =
+         OJPEGLibjpegJpegErrorMgrOutputMessage;
+     sp->libjpeg_jpeg_error_mgr.error_exit = OJPEGLibjpegJpegErrorMgrErrorExit;
++    sp->libjpeg_jpeg_error_mgr.emit_message = emitMessage;
+     sp->libjpeg_jpeg_decompress_struct.err = &(sp->libjpeg_jpeg_error_mgr);
+     sp->libjpeg_jpeg_decompress_struct.client_data = (void *)tif;
+     if (jpeg_create_decompress_encap(
+--- a/libxml2/parser.c
++++ b/libxml2/parser.c
+@@ -7497,10 +7497,10 @@
+             if ((cur->type == XML_TEXT_NODE) ||
+                 (ctxt->options & XML_PARSE_NOCDATA)) {
+                 if (ctxt->sax->characters != NULL)
+-                    ctxt->sax->characters(ctxt, cur->content, len);
++                    ctxt->sax->characters(ctxt->userData, cur->content, len);
+             } else {
+                 if (ctxt->sax->cdataBlock != NULL)
+-                    ctxt->sax->cdataBlock(ctxt, cur->content, len);
++                    ctxt->sax->cdataBlock(ctxt->userData, cur->content, len);
+             }
+ 
+             cur = cur->next;
+@@ -7520,10 +7520,12 @@
+                 if ((cur->type == XML_TEXT_NODE) ||
+                     (ctxt->options & XML_PARSE_NOCDATA)) {
+                     if (ctxt->sax->characters != NULL)
+-                        ctxt->sax->characters(ctxt, cur->content, len);
++                        ctxt->sax->characters(ctxt->userData, cur->content,
++                                              len);
+                 } else {
+                     if (ctxt->sax->cdataBlock != NULL)
+-                        ctxt->sax->cdataBlock(ctxt, cur->content, len);
++                        ctxt->sax->cdataBlock(ctxt->userData, cur->content,
++                                              len);
+                 }
+ 
+                 break;
+--- a/libxml2/HTMLparser.c
++++ b/libxml2/HTMLparser.c
+@@ -2166,7 +2166,7 @@
+  * into the html40ElementTable array but I don't want to risk any
+  * binary incompatibility
+  */
+-static const char *allowPCData[] = {
++static const char *const allowPCData[] = {
+     "a", "abbr", "acronym", "address", "applet", "b", "bdo", "big",
+     "blockquote", "body", "button", "caption", "center", "cite", "code",
+     "dd", "del", "dfn", "div", "dt", "em", "font", "form", "h1", "h2",
+--- a/openssl/crypto/dsa/dsa_ossl.c
++++ b/openssl/crypto/dsa/dsa_ossl.c
+@@ -39,7 +39,7 @@
+ static BIGNUM *dsa_mod_inverse_fermat(const BIGNUM *k, const BIGNUM *q,
+     BN_CTX *ctx);
+ 
+-static DSA_METHOD openssl_dsa_meth = {
++static const DSA_METHOD openssl_dsa_meth = {
+     "OpenSSL DSA method",
+     dsa_do_sign,
+     dsa_sign_setup_no_digest,
+--- a/openssl/crypto/err/err.c
++++ b/openssl/crypto/err/err.c
+@@ -34,7 +34,7 @@
+ #endif
+ 
+ #ifndef OPENSSL_NO_ERR
+-static ERR_STRING_DATA ERR_str_libraries[] = {
++static const ERR_STRING_DATA ERR_str_libraries[] = {
+     { ERR_PACK(ERR_LIB_NONE, 0, 0), "unknown library" },
+     { ERR_PACK(ERR_LIB_SYS, 0, 0), "system library" },
+     { ERR_PACK(ERR_LIB_BN, 0, 0), "bignum routines" },
+@@ -85,7 +85,7 @@
+  * Should make sure that all ERR_R_ reasons defined in include/openssl/err.h.in
+  * are listed.  For maintainability, please keep all reasons in the same order.
+  */
+-static ERR_STRING_DATA ERR_str_reasons[] = {
++static const ERR_STRING_DATA ERR_str_reasons[] = {
+     { ERR_R_SYS_LIB, "system lib" },
+     { ERR_R_BN_LIB, "BN lib" },
+     { ERR_R_RSA_LIB, "RSA lib" },
+--- a/openssl/crypto/evp/e_chacha20_poly1305.c
++++ b/openssl/crypto/evp/e_chacha20_poly1305.c
+@@ -605,7 +605,7 @@
+     }
+ }
+ 
+-static EVP_CIPHER chacha20_poly1305 = {
++static const EVP_CIPHER chacha20_poly1305 = {
+     NID_chacha20_poly1305,
+     1, /* block_size */
+     CHACHA_KEY_SIZE, /* key_len */
+--- a/openssl/crypto/evp/e_rc4_hmac_md5.c
++++ b/openssl/crypto/evp/e_rc4_hmac_md5.c
+@@ -240,7 +240,7 @@
+     }
+ }
+ 
+-static EVP_CIPHER r4_hmac_md5_cipher = {
++static const EVP_CIPHER r4_hmac_md5_cipher = {
+ #ifdef NID_rc4_hmac_md5
+     NID_rc4_hmac_md5,
+ #else
+--- a/openssl/crypto/rsa/rsa_ossl.c
++++ b/openssl/crypto/rsa/rsa_ossl.c
+@@ -36,7 +36,7 @@
+ #ifdef S390X_MOD_EXP
+ static int rsa_ossl_s390x_mod_exp(BIGNUM *r0, const BIGNUM *i, RSA *rsa,
+     BN_CTX *ctx);
+-static RSA_METHOD rsa_pkcs1_ossl_meth = {
++static const RSA_METHOD rsa_pkcs1_ossl_meth = {
+     "OpenSSL PKCS#1 RSA",
+     rsa_ossl_public_encrypt,
+     rsa_ossl_public_decrypt, /* signature verification */
+--- a/openssl/providers/implementations/encode_decode/decode_pem2der.c
++++ b/openssl/providers/implementations/encode_decode/decode_pem2der.c
+@@ -131,7 +131,7 @@
+      * PEM names we recognise.  Other PEM names should be recognised by
+      * other decoder implementations.
+      */
+-    static struct pem_name_map_st {
++    static const struct pem_name_map_st {
+         const char *pem_name;
+         int object_type;
+         const char *data_type;
+--- a/openssl/providers/implementations/keymgmt/ec_kmgmt.c
++++ b/openssl/providers/implementations/keymgmt/ec_kmgmt.c
+@@ -1188,7 +1188,7 @@
+ static const OSSL_PARAM *ec_gen_settable_params(ossl_unused void *genctx,
+     ossl_unused void *provctx)
+ {
+-    static OSSL_PARAM settable[] = {
++    static const OSSL_PARAM settable[] = {
+         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
+         OSSL_PARAM_int(OSSL_PKEY_PARAM_USE_COFACTOR_ECDH, NULL),
+         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_EC_ENCODING, NULL, 0),
+--- a/openssl/providers/implementations/keymgmt/rsa_kmgmt.c
++++ b/openssl/providers/implementations/keymgmt/rsa_kmgmt.c
+@@ -548,7 +548,7 @@
+ static const OSSL_PARAM *rsa_gen_settable_params(ossl_unused void *genctx,
+     ossl_unused void *provctx)
+ {
+-    static OSSL_PARAM settable[] = {
++    static const OSSL_PARAM settable[] = {
+         rsa_gen_basic,
+         OSSL_PARAM_END
+     };
+@@ -559,7 +559,7 @@
+ static const OSSL_PARAM *rsapss_gen_settable_params(ossl_unused void *genctx,
+     ossl_unused void *provctx)
+ {
+-    static OSSL_PARAM settable[] = {
++    static const OSSL_PARAM settable[] = {
+         rsa_gen_basic,
+         rsa_gen_pss,
+         OSSL_PARAM_END
+--- a/pixman/pixman/pixman-bits-image.c
++++ b/pixman/pixman/pixman-bits-image.c
+@@ -351,8 +351,8 @@
+      * positioned relative to a particular phase (and not relative to whatever
+      * exact fraction we happen to get here).
+      */
+-    x = ((x >> x_phase_shift) << x_phase_shift) + ((1 << x_phase_shift) >> 1);
+-    y = ((y >> y_phase_shift) << y_phase_shift) + ((1 << y_phase_shift) >> 1);
++    x = ((uint32_t)(x >> x_phase_shift) << x_phase_shift) + ((1 << x_phase_shift) >> 1);
++    y = ((uint32_t)(y >> y_phase_shift) << y_phase_shift) + ((1 << y_phase_shift) >> 1);
+ 
+     px = (x & 0xffff) >> x_phase_shift;
+     py = (y & 0xffff) >> y_phase_shift;
+--- a/pixman/pixman/pixman-combine32.c
++++ b/pixman/pixman/pixman-combine32.c
+@@ -589,7 +589,7 @@
+ 	    rg = DIV_ONE_UN8 (rg);					\
+ 	    rb = DIV_ONE_UN8 (rb);					\
+ 									\
+-	    *(dest + i) = ra << 24 | rr << 16 | rg << 8 | rb;		\
++	    *(dest + i) = (uint32_t)ra << 24 | rr << 16 | rg << 8 | rb;		\
+ 	}								\
+     }									\
+     									\
+--- a/pixman/pixman/pixman-fast-path.c
++++ b/pixman/pixman/pixman-fast-path.c
+@@ -2758,8 +2758,8 @@
+ 	 * positioned relative to a particular phase (and not relative to whatever
+ 	 * exact fraction we happen to get here).
+ 	 */
+-	x = ((vx >> x_phase_shift) << x_phase_shift) + ((1 << x_phase_shift) >> 1);
+-	y = ((vy >> y_phase_shift) << y_phase_shift) + ((1 << y_phase_shift) >> 1);
++	x = ((uint32_t)(vx >> x_phase_shift) << x_phase_shift) + ((1 << x_phase_shift) >> 1);
++	y = ((uint32_t)(vy >> y_phase_shift) << y_phase_shift) + ((1 << y_phase_shift) >> 1);
+ 
+ 	px = (x & 0xffff) >> x_phase_shift;
+ 	py = (y & 0xffff) >> y_phase_shift;
+@@ -2836,7 +2836,7 @@
+ 	sgtot = CLIP (sgtot, 0, 0xff);
+ 	sbtot = CLIP (sbtot, 0, 0xff);
+ 
+-	buffer[k] = (satot << 24) | (srtot << 16) | (sgtot << 8) | (sbtot << 0);
++	buffer[k] = ((uint32_t)satot << 24) | (srtot << 16) | (sgtot << 8) | (sbtot << 0);
+ 
+     next:
+ 	vx += ux;
+--- a/pixman/pixman/pixman-glyph.c
++++ b/pixman/pixman/pixman-glyph.c
+@@ -38,6 +38,7 @@
+ 
+ /* XXX: These numbers are arbitrary---we've never done any measurements.
+  */
++#define N_PIXELS_HIGH_WATER  (4 * 1024 * 1024)
+ #define N_GLYPHS_HIGH_WATER  (16384)
+ #define N_GLYPHS_LOW_WATER   (8192)
+ #define HASH_SIZE (2 * N_GLYPHS_HIGH_WATER)
+@@ -58,6 +59,7 @@
+     int			n_glyphs;
+     int			n_tombstones;
+     int			freeze_count;
++    long        n_pixels;
+     pixman_list_t	mru;
+     glyph_t *		glyphs[HASH_SIZE];
+ };
+@@ -133,6 +135,7 @@
+     if (*loc == TOMBSTONE)
+ 	cache->n_tombstones--;
+     cache->n_glyphs++;
++    cache->n_pixels += glyph->image->bits.width * glyph->image->bits.height;
+ 
+     *loc = glyph;
+ }
+@@ -150,6 +153,7 @@
+     cache->glyphs[idx & HASH_MASK] = TOMBSTONE;
+     cache->n_tombstones++;
+     cache->n_glyphs--;
++    cache->n_pixels -= glyph->image->bits.width * glyph->image->bits.height;
+ 
+     /* Eliminate tombstones if possible */
+     if (cache->glyphs[(idx + 1) & HASH_MASK] == NULL)
+@@ -180,6 +184,7 @@
+ 
+     cache->n_glyphs = 0;
+     cache->n_tombstones = 0;
++    cache->n_pixels = 0;
+ }
+ 
+ PIXMAN_EXPORT pixman_glyph_cache_t *
+@@ -194,6 +199,7 @@
+     cache->n_glyphs = 0;
+     cache->n_tombstones = 0;
+     cache->freeze_count = 0;
++    cache->n_pixels = 0;
+ 
+     pixman_list_init (&cache->mru);
+ 
+@@ -220,9 +226,9 @@
+ pixman_glyph_cache_thaw (pixman_glyph_cache_t  *cache)
+ {
+     if (--cache->freeze_count == 0					&&
+-	cache->n_glyphs + cache->n_tombstones > N_GLYPHS_HIGH_WATER)
+-    {
+-	if (cache->n_tombstones > N_GLYPHS_HIGH_WATER)
++	(cache->n_glyphs + cache->n_tombstones > N_GLYPHS_HIGH_WATER || cache->n_pixels > N_PIXELS_HIGH_WATER))
++    {
++	if (cache->n_tombstones > N_GLYPHS_LOW_WATER)
+ 	{
+ 	    /* More than half the entries are
+ 	     * tombstones. Just dump the whole table.
+@@ -230,7 +236,7 @@
+ 	    clear_table (cache);
+ 	}
+ 
+-	while (cache->n_glyphs > N_GLYPHS_LOW_WATER)
++	while (cache->n_glyphs > N_GLYPHS_LOW_WATER || cache->n_pixels > N_PIXELS_HIGH_WATER)
+ 	{
+ 	    glyph_t *glyph = CONTAINER_OF (glyph_t, mru_link, cache->mru.tail);
+ 
+--- a/pixman/pixman/pixman-utils.c
++++ b/pixman/pixman/pixman-utils.c
+@@ -27,6 +27,7 @@
+ #endif
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <limits.h>
+ 
+ #include "pixman-private.h"
+ 
+@@ -213,7 +214,7 @@
+ 	g = float_to_unorm (src[i].g, 8);
+ 	b = float_to_unorm (src[i].b, 8);
+ 
+-	dst[i] = (a << 24) | (r << 16) | (g << 8) | (b << 0);
++	dst[i] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | (b << 0);
+     }
+ }
+ 
+--- a/pixman/pixman/pixman-x86.c
++++ b/pixman/pixman/pixman-x86.c
+@@ -74,6 +74,8 @@
+ 
+ #else
+ 
++#if !defined(__EMSCRIPTEN__)
++
+ #if defined (__GNUC__)
+ #include <cpuid.h>
+ #elif defined(_MSC_VER)
+@@ -100,10 +102,17 @@
+ #error Unknown compiler
+ #endif
+ }
++ 
++#endif // !__EMSCRIPTEN__
+ 
+ static cpu_features_t
+ detect_cpu_features (void)
+ {
++#if defined(__EMSCRIPTEN__)
++
++    return X86_MMX | X86_MMX_EXTENSIONS | X86_SSE | X86_SSE2 | X86_SSSE3;
++
++#else
+     uint32_t a, b, c, d;
+     cpu_features_t features = 0;
+ 
+@@ -149,6 +158,8 @@
+     }
+ 
+     return features;
++
++#endif // !__EMSCRIPTEN__
+ }
+ 
+ #endif
+--- a/raptor/src/raptor_term.c
++++ b/raptor/src/raptor_term.c
+@@ -209,10 +209,16 @@
+     }
+ 
+     l = new_language;
+-    while((c = *language++)) {
+-      if(c == '_')
+-        c = '-';
+-      *l++ = c;
++    {
++      size_t i;
++      for(i = 0; i < language_len; i++) {
++        c = *language++;
++        if(!c)
++          break;
++        if(c == '_')
++          c = '-';
++        *l++ = c;
++      }
+     }
+     *l = '\0';
+   } else
+--- a/raptor/src/raptor_ntriples.c
++++ b/raptor/src/raptor_ntriples.c
+@@ -212,7 +212,7 @@
+             locator->column--;
+             locator->byte--;
+           }
+-          if(term_class == RAPTOR_TERM_CLASS_BNODEID && dest[-1] == '.') {
++          if(term_class == RAPTOR_TERM_CLASS_BNODEID && position > 0 && dest[-1] == '.') {
+             /* If bnode id ended on '.' move back one */
+             dest--;
+ 
+--- a/raptor/src/raptor_rfc2396.c
++++ b/raptor/src/raptor_rfc2396.c
+@@ -289,10 +289,8 @@
+   }
+ 
+   
+-#if defined(RAPTOR_DEBUG)
+   if(path_len != strlen((const char*)path_buffer))
+     RAPTOR_FATAL4("Path '%s' length %ld does not match calculated %ld.", (const char*)path_buffer, (long)strlen((const char*)path_buffer), (long)path_len);
+-#endif
+     
+   /* Remove all "<component>/../" path components */
+ 
+@@ -327,10 +325,8 @@
+     if(!prev || !cur)
+       continue;
+ 
+-#if defined(RAPTOR_DEBUG)
+     if(path_len != strlen((const char*)path_buffer))
+       RAPTOR_FATAL3("Path length %ld does not match calculated %ld.", (long)strlen((const char*)path_buffer), (long)path_len);
+-#endif
+     
+     /* If the current one is '..' */
+     if(s == (cur+2) && cur[0] == '.' && cur[1] == '.') {
+@@ -351,6 +347,10 @@
+           *dest++ = *s++;
+         *dest = '\0';
+         path_len -= len;
++        if(path_len <= 0) {
++          *path_buffer = '\0';
++          return 0;
++        }
+ 
+         if(p && p < prev) {
+           /* We know the previous prev path component and we didn't do
+@@ -386,17 +386,19 @@
+   } 
+ 
+   
+-  if(prev && s == (cur+2) && cur[0] == '.' && cur[1] == '.') {
++  if(prev && cur && s == (cur+2) && cur[0] == '.' && cur[1] == '.') {
+     /* Remove <component>/.. at the end of the path */
+     *prev = '\0';
+     path_len -= (s-prev);
+-  }
+-
+-
+-#if defined(RAPTOR_DEBUG)
++    if(path_len <= 0) {
++      *path_buffer = '\0';
++      return 0;
++    }
++  }
++
++
+   if(path_len != strlen((const char*)path_buffer))
+     RAPTOR_FATAL3("Path length %ld does not match calculated %ld.", (long)strlen((const char*)path_buffer), (long)path_len);
+-#endif
+ 
+   /* RFC3986 Appendix C.2 / 5.4.2 Abnormal Examples
+    * Remove leading /../ and /./ 
+--- a/raptor/src/raptor_libxml.c
++++ b/raptor/src/raptor_libxml.c
+@@ -246,9 +246,11 @@
+     
+     ret->owner = 1;
+ 
+-#if LIBXML_VERSION >= 20627
++#if LIBXML_VERSION >= 20627 && LIBXML_VERSION < 21100
+     /* Checked field was released in 2.6.27 on 2006-10-25
+      * http://git.gnome.org/browse/libxml2/commit/?id=a37a6ad91a61d168ecc4b29263def3363fff4da6
++     * and removed with
++     * https://gitlab.gnome.org/GNOME/libxml2/-/commit/ce76ebfd1312459951d555ad9d87fb9a89eede55
+      *
+      */
+ 
+@@ -655,7 +657,10 @@
+     xmlSetGenericErrorFunc(world->libxml_saved_generic_error_context,
+                            world->libxml_saved_generic_error_handler);
+ 
++// I have logged a feature request to have a flag to turn this off, at https://github.com/dajobe/raptor/issues/69
++#if 0
+   xmlCleanupParser();
++#endif
+ }
+ 
+ 
+--- a/raptor/src/raptor_uri.c
++++ b/raptor/src/raptor_uri.c
+@@ -59,6 +59,10 @@
+ #endif
+ #ifdef HAVE_SYS_STAT_H
+ #include <sys/stat.h>
++#endif
++
++#if !defined(HAVE_ACCESS) && defined(HAVE__ACCESS)
++#include <io.h>
+ #endif
+ 
+ /* Raptor includes */
+--- a/rasqal/src/rasqal_ntriples.c
++++ b/rasqal/src/rasqal_ntriples.c
+@@ -23,6 +23,10 @@
+ 
+ #ifdef HAVE_CONFIG_H
+ #include <rasqal_config.h>
++#endif
++
++#ifdef _WIN32
++#include <win32_rasqal_config.h>
+ #endif
+ 
+ #include <stdio.h>
+--- a/rasqal/src/rasqal_algebra.c
++++ b/rasqal/src/rasqal_algebra.c
+@@ -773,7 +773,7 @@
+ }
+ 
+ 
+-static struct {
++static const struct {
+   const char* const label;
+   size_t length;
+ } rasqal_algebra_node_operator_labels[RASQAL_ALGEBRA_OPERATOR_LAST + 1] = {
+--- a/redland/src/rdf_init.c
++++ b/redland/src/rdf_init.c
+@@ -42,6 +42,8 @@
+ #endif
+ #ifdef HAVE_UNISTD_H
+ #include <unistd.h> /* for getpid() */
++#else
++#include <process.h>
+ #endif
+ 
+ /* for gettimeofday */
+--- a/redland/src/rdf_log.c
++++ b/redland/src/rdf_log.c
+@@ -136,6 +136,7 @@
+       char *buffer = LIBRDF_MALLOC(char*, slocator_len + 2);
+       *buffer=' ';
+       raptor_locator_format(buffer + 1, slocator_len, (raptor_locator*)locator);
++      buffer[slocator_len + 1] = '\0';
+       fputs(buffer, stderr);
+       LIBRDF_FREE(char*, buffer);
+     }
+--- a/redland/src/rdf_hash_memory.c
++++ b/redland/src/rdf_hash_memory.c
+@@ -910,7 +910,7 @@
+     
+     node=next;
+     while(node) {
+-      if(key->size == node->key_len && !memcmp(key, node->key, key->size)){
++      if(key->size == node->key_len && !memcmp(key->data, node->key, key->size)){
+         found=1;
+         break;
+       }
+--- a/zxcvbn-c/zxcvbn.c
++++ b/zxcvbn-c/zxcvbn.c
+@@ -42,11 +42,6 @@
+ #else
+ #include <fstream>
+ #endif
+-#endif
+-
+-/* For pre-compiled headers under windows */
+-#ifdef _WIN32
+-#include "stdafx.h"
+ #endif
+ 
+ /* Minimum number of characters in a incrementing/decrementing sequence match */
+--- a/zxing/core/src/BarcodeFormat.cpp
++++ b/zxing/core/src/BarcodeFormat.cpp
+@@ -22,7 +22,7 @@
+ 	std::string_view name;
+ };
+ 
+-static BarcodeFormatName NAMES[] = {
++static const BarcodeFormatName NAMES[] = {
+ 	{BarcodeFormat::None, "None"},
+ 	{BarcodeFormat::Aztec, "Aztec"},
+ 	{BarcodeFormat::Codabar, "Codabar"},
+--- a/zxing/core/src/datamatrix/DMSymbolInfo.cpp
++++ b/zxing/core/src/datamatrix/DMSymbolInfo.cpp
+@@ -50,7 +50,7 @@
+ 	{ false, 1558, 620, 22, 22, 36, -1, 62 },
+ };
+ 
+-static const SymbolInfo* s_symbols = PROD_SYMBOLS;
++static const SymbolInfo* const s_symbols = PROD_SYMBOLS;
+ static ZXING_IF_NOT_TEST(const) size_t s_symbolCount = Size(PROD_SYMBOLS);
+ 
+ #ifdef ZXING_BUILD_FOR_TEST
+--- a/zxing/core/src/pdf417/PDFEncoder.cpp
++++ b/zxing/core/src/pdf417/PDFEncoder.cpp
+@@ -286,7 +286,7 @@
+ 											407, 164, 332, 899, 165, 726, 600, 325, 498, 655, 357, 752, 768, 223, 849, 647,
+ 											 63, 310, 863, 251, 366, 304, 282, 738, 675, 410, 389, 244,  31, 121, 303, 263, };
+ 
+-static const short* EC_COEFFICIENTS[] = {EC_COEFFICIENTS_L0, EC_COEFFICIENTS_L1, EC_COEFFICIENTS_L2,
++static const short* const EC_COEFFICIENTS[] = {EC_COEFFICIENTS_L0, EC_COEFFICIENTS_L1, EC_COEFFICIENTS_L2,
+ 										 EC_COEFFICIENTS_L3, EC_COEFFICIENTS_L4, EC_COEFFICIENTS_L5,
+ 										 EC_COEFFICIENTS_L6, EC_COEFFICIENTS_L7, EC_COEFFICIENTS_L8};
+ 
