@@ -52,8 +52,10 @@ mv .research/rhwp-patched/rhwp-optimized.wasm .research/rhwp-patched/rhwp_bg.was
 
 - Ubuntu 24.04 WSL, JDK 17, Android SDK 35, NDK 29.0.14206865 및 LibreOffice Android 빌드 의존성을 사용함. [LibreOffice 공식 교차 빌드 설명](https://github.com/LibreOffice/core/blob/libreoffice-26.2.6.3/README.cross) 및 [F-Droid 빌드 설정](https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/org.documentfoundation.libreoffice.yml)을 참고함.
 - LibreOffice 태그 `libreoffice-26.2.6.3`, 커밋 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`을 사용함. Linux의 소스 디렉터리에서 SDK와 NDK 경로를 실제 값으로 대체해 다음 순서로 빌드함.
+- CFB 버전 4 읽기를 위해 [엔진 패치](../patches/libreoffice-26.2-cfb4-read.patch)를 LibreOffice 소스 루트에서 적용한 후 빌드함. 원본 소스와 수정 사항을 함께 제공해야 함.
 
 ```sh
+git apply /프로젝트_경로/patches/libreoffice-26.2-cfb4-read.patch
 ./autogen.sh --enable-release-build --with-vendor=MINVIEWER \
   --with-android-package-name=org.minviewer.app \
   --with-android-ndk=NDK_29_경로 --with-android-sdk=LINUX_SDK_경로 \
@@ -337,6 +339,14 @@ make PARALLELISM=8 -j8
 - HWP 공개 표본의 차트 색상 차이를 렌더러 출력으로 다시 재현함. 차트는 테마 색상 참조를 사용하고 현재 엔진은 고정 근사 색상표로 해석함. 단일 표본에 맞춘 고정 색상 보정은 다른 문서의 색상을 훼손할 수 있어 적용하지 않음. 차트 원본 테마의 신뢰할 수 있는 해석과 다양한 표본 검증이 필요함.
 - 4096바이트 섹터를 사용하는 암호 Excel에서 지원되지 않는 저장 구조 안내를 확인함. 이후 512바이트 섹터 구조의 Standard 3.2 비교 문서에서 잘못된 비밀번호 안내와 올바른 비밀번호 입력 후 열기를 에뮬레이터에서 확인함. 4096바이트 구조 자체의 읽기 지원은 미구현 상태임.
 - Word의 간헐적인 화살표 깨짐은 사용자가 이후 정상 표시를 확인한 상태이며 재현되지 않음. 원인과 수정 효과를 확정할 근거가 없어 글꼴 설정을 임의 변경하지 않음.
+
+## CFB 버전 4 암호 Excel 읽기 시험
+
+- LibreOffice 26.2.6.3의 CFB 헤더 검사에서 버전 4·4096바이트 섹터 조합을 허용하고 헤더 섹터 크기를 반영해 페이지 수를 계산하도록 수정함. 앱에서 해당 저장 구조를 일괄 차단하던 분기를 제거함.
+- Android 15 x86_64 에뮬레이터의 ARM64 변환 실행에서 4096바이트 구조의 Standard 3.2 공개 Excel 1개와 동일 암호 데이터의 512바이트 구조 비교 파일을 시험함. 각각 잘못된 비밀번호 안내와 올바른 비밀번호 입력 후 열기를 확인했으며, 원본 표본의 첫 시트에 `1 Hello`가 표시됨을 육안 확인함.
+- 공개 Agile 암호 Excel과 별도 암호 Word·Excel·PowerPoint의 비밀번호 오류 및 열기를 확인함. 손상 Word·Excel과 외부 파일 권한 거부 안내, 일반 Word·Excel의 페이지·시트·확대 상태 복원도 확인함.
+- 수정 LibreOffice ARM64 무서명 APK는 87,582,374바이트이며 SHA-256은 `bb60e326b39a67feb0459a790cf3d496113e8a999f728ab7dd543598e9e82f18`임. 정리 빌드한 MIN VIEWER ARM64 디버그 APK는 103,397,355바이트임. 압축 APK 기준이며 설치 크기와 메모리는 측정하지 않음.
+- 4096바이트 구조의 다른 파일, 여러 암호 방식·복잡한 내용·손상 구조 및 실기기 동작은 미검증 상태임. CFB 버전 4를 사용하는 모든 Office 문서의 호환성을 보장하지 않음.
 
 ## 가로·세로 회전 확인
 

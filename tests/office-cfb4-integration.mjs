@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -45,10 +46,16 @@ const idFor = name => {
 const open = id => run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
 run('shell', 'am', 'force-stop', 'org.minviewer.app');
 open(idFor('standard.xlsx'));
-let xml = await waitFor(/이 Office 파일의 저장 방식은 현재 지원하지 않습니다/);
-assert.match(xml, /text="확인"/, '안내 내용을 읽고 닫는 확인창이 없음');
-tap(xml, '확인');
-await waitFor(/최근 문서/);
+await waitFor(/문서 비밀번호/);
+run('shell', 'input', 'text', 'wrong');
+tap(screen(), '열기');
+await waitFor(/비밀번호가 맞지 않습니다/);
+run('shell', 'input', 'text', 'password');
+tap(screen(), '열기');
+await waitFor(/LibreOffice 1 \/ \d+/);
+await delay(1500);
+writeFileSync('.research/office-test/cfb4-open.png', execFileSync(adb, ['exec-out', 'screencap', '-p']));
+run('shell', 'input', 'keyevent', '4');
 await delay(1000);
 open(idFor('variant-512-dataspaces-3.2.xlsx'));
 await waitFor(/문서 비밀번호/);
@@ -58,4 +65,4 @@ await waitFor(/비밀번호가 맞지 않습니다/);
 run('shell', 'input', 'text', 'password');
 tap(screen(), '열기');
 await waitFor(/LibreOffice 1 \/ \d+/);
-console.log('지원하지 않는 저장 구조 안내와 다른 암호 문서 재열기 확인');
+console.log('4096바이트와 512바이트 암호 Excel의 비밀번호 오류 및 열기 확인');

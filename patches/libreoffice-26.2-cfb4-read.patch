@@ -1,0 +1,24 @@
+diff --git a/sot/source/sdstor/stgelem.cxx b/sot/source/sdstor/stgelem.cxx
+--- a/sot/source/sdstor/stgelem.cxx
++++ b/sot/source/sdstor/stgelem.cxx
+@@ -194,7 +194,7 @@ bool StgHeader::Check()
+ {
+     return  memcmp( m_cSignature, cStgSignature, 8 ) == 0
+-            && static_cast<short>( m_nVersion >> 16 ) == 3
+-            && m_nPageSize == 9
++            && ((static_cast<short>( m_nVersion >> 16 ) == 3 && m_nPageSize == 9)
++                || (static_cast<short>( m_nVersion >> 16 ) == 4 && m_nPageSize == 12))
+             && lcl_wontoverflow(m_nPageSize)
+             && lcl_wontoverflow(m_nDataPageSize)
+             && m_nFATSize > 0
+diff --git a/sot/source/sdstor/stgcache.cxx b/sot/source/sdstor/stgcache.cxx
+--- a/sot/source/sdstor/stgcache.cxx
++++ b/sot/source/sdstor/stgcache.cxx
+@@ -77,6 +77,5 @@ StgPage::~StgPage()
+ static sal_Int32 lcl_GetPageCount( sal_uInt64 nFileSize, short nPageSize )
+ {
+-//    return (nFileSize >= 512) ? (nFileSize - 512) / nPageSize : 0;
+     // #i61980# real life: last page may be incomplete, return number of *started* pages
+-    return (nFileSize >= 512) ? (nFileSize - 512 + nPageSize - 1) / nPageSize : 0;
++    return (nFileSize >= static_cast<sal_uInt64>(nPageSize)) ? (nFileSize - 1) / nPageSize : 0;
+ }

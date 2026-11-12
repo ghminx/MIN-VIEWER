@@ -377,8 +377,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 2 || requestCode == 3) {
-            if (requestCode == 3 && (data?.getBooleanExtra("password_cancelled", false) == true ||
-                    data?.getBooleanExtra("unsupported_storage", false) == true)) {
+            if (requestCode == 3 && data?.getBooleanExtra("password_cancelled", false) == true) {
                 openingRecent = false
                 resumeAfterOffice = false
                 showHome()

@@ -239,21 +239,6 @@ class OfficeActivity : Activity() {
                 if (count < 4 || (!signature.contentEquals(zip) && !isCompound)) {
                     throw IOException("파일 내용이 형식과 다릅니다.")
                 }
-                if (isCompound && count >= 32 &&
-                    header[26] == 4.toByte() && header[27] == 0.toByte() &&
-                    header[30] == 12.toByte() && header[31] == 0.toByte()) {
-                    closeDocument()
-                    runOnUiThread {
-                        if (!closed) {
-                            status.text = "지원되지 않는 파일"
-                            setResult(RESULT_CANCELED, Intent().putExtra("unsupported_storage", true))
-                            AlertDialog.Builder(this).setTitle("파일을 열 수 없습니다")
-                                .setMessage("이 Office 파일의 저장 방식은 현재 지원하지 않습니다.")
-                                .setCancelable(false).setPositiveButton("확인") { _, _ -> finish() }.show()
-                        }
-                    }
-                    return@execute
-                }
                 if (!engineCachePrepared) {
                     val engineCache = File(cacheDir, "lok-engine")
                     if (engineCache.exists() && !engineCache.deleteRecursively()) throw IOException("이전 엔진 캐시를 정리할 수 없습니다.")
