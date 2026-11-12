@@ -357,9 +357,22 @@ class OfficeActivity : Activity() {
             if (!it.delete()) throw IOException("이전 사용자 글꼴 연결을 정리할 수 없습니다.")
         }
         val stored = UserFonts(this)
-        stored.all().forEach { entry ->
+        val entries = stored.all()
+        entries.forEach { entry ->
             android.system.Os.symlink(stored.file(entry.id).absolutePath, File(engineFonts, "min-user-${entry.id}.ttf").absolutePath)
         }
+        val hasMalgun = entries.any { entry -> entry.families.any { it.equals("Malgun Gothic", true) || it == "맑은 고딕" } }
+        val original = assets.open("unpack/etc/fonts/fonts.conf").bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val marker = "<fontconfig>"
+        if (!original.contains(marker)) throw IOException("엔진 글꼴 설정을 읽을 수 없습니다.")
+        val userDirectory = android.text.TextUtils.htmlEncode(engineFonts.absolutePath)
+        val aliases = if (hasMalgun) "" else """
+            <alias><family>Malgun Gothic</family><prefer><family>Noto Sans CJK KR</family><family>Noto Sans KR</family></prefer></alias>
+            <alias><family>맑은 고딕</family><prefer><family>Noto Sans CJK KR</family><family>Noto Sans KR</family></prefer></alias>
+        """.trimIndent()
+        val configured = original.replaceFirst(marker, "$marker\n<dir>$userDirectory</dir>\n$aliases")
+        val fontConfig = File(applicationInfo.dataDir, "etc/fonts/fonts.conf")
+        if (!fontConfig.isFile || fontConfig.readText(Charsets.UTF_8) != configured) fontConfig.writeText(configured, Charsets.UTF_8)
     }
 
     private fun requestPassword(office: Office, url: String) {
