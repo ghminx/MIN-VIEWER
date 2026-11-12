@@ -18,6 +18,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.Gravity
 import android.widget.Button
 import android.widget.CheckedTextView
 import android.widget.ImageView
@@ -29,6 +30,7 @@ import android.widget.TextView
 import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.GridView
+import android.widget.FrameLayout
 import org.libreoffice.kit.Document
 import org.libreoffice.kit.LibreOfficeKit
 import org.libreoffice.kit.Office
@@ -54,6 +56,8 @@ class OfficeActivity : Activity() {
     private lateinit var image: ImageView
     private lateinit var slideList: TextView
     private lateinit var viewport: ScrollView
+    private lateinit var sheetLeftHint: TextView
+    private lateinit var sheetRightHint: TextView
     private lateinit var contentRow: LinearLayout
     private var closeSlidePanel: (() -> Unit)? = null
     private var slidePanelSelection: Int? = null
@@ -184,9 +188,25 @@ class OfficeActivity : Activity() {
                 if (changed && !slidePanelAnimating && pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }
+        val documentArea = FrameLayout(this).apply {
+            addView(viewport, FrameLayout.LayoutParams(-1, -1))
+            fun sheetHint(label: String, description: String, edge: Int): TextView = TextView(this@OfficeActivity).apply {
+                text = label
+                contentDescription = description
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.argb(155, 25, 45, 77))
+                visibility = View.GONE
+                addView(this, FrameLayout.LayoutParams((24 * resources.displayMetrics.density).toInt(),
+                    (48 * resources.displayMetrics.density).toInt(), edge or Gravity.CENTER_VERTICAL))
+            }
+            sheetLeftHint = sheetHint("‹", "왼쪽에 시트 영역 있음", Gravity.START)
+            sheetRightHint = sheetHint("›", "오른쪽에 시트 영역 있음", Gravity.END)
+        }
         contentRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(viewport, LinearLayout.LayoutParams(0, -1, 1f))
+            addView(documentArea, LinearLayout.LayoutParams(0, -1, 1f))
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -463,6 +483,8 @@ class OfficeActivity : Activity() {
                     image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, -2)
                 }
                 image.setImageBitmap(bitmap)
+                sheetLeftHint.visibility = if (sheet && x > left) View.VISIBLE else View.GONE
+                sheetRightHint.visibility = if (sheet && x.toLong() + renderedWidth < right.toLong()) View.VISIBLE else View.GONE
                 if (index == swipeAnimationTarget) {
                     swipeAnimationTarget = -1
                     image.animate().cancel()

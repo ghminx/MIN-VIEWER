@@ -29,7 +29,8 @@ for (const [name, mime] of [
     run('shell', 'am', 'force-stop', 'org.minviewer.app');
     run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-c', 'android.intent.category.DEFAULT', '-t', mime,
         '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
-    const xml = await waitFor(/일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다/);
+    const xml = await waitFor(/1 \/ 1/);
+    assert.doesNotMatch(xml, /일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다/);
     assert.match(xml, /1 \/ 1/, `${name} 페이지가 열리지 않음`);
 }
 const normalId = records.split(/\r?\n/).find(line => line.includes('_display_name=real.hwp'))?.match(/_id=(\d+)/)?.[1];
@@ -38,4 +39,4 @@ run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-c', 'android.i
     '-d', `content://media/external/file/${normalId}`, '-f', '1', '-p', 'org.minviewer.app');
 const normal = await waitFor(/1 \/ 35/);
 assert.doesNotMatch(normal, /일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다/, '다른 문서에 이전 경고가 남음');
-console.log('HWP·HWPX 수식 글꼴 경고 및 다른 문서 전환 시 제거 확인 완료');
+console.log('HWP·HWPX 수식 문서 표시와 안내 제거 확인 완료');

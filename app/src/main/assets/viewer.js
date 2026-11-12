@@ -19,8 +19,6 @@ let hwpActiveObserver;
 let hwpSearchState;
 let hwpHighlights = [];
 let hwpLayoutGeneration = 0;
-let equationFontWarningShown = false;
-let chartWarningShown = false;
 let userFonts = [];
 
 window.setUserFonts = fonts => { userFonts = fonts; };
@@ -42,8 +40,6 @@ window.resetDocument = () => {
     hwpCurrentPage = 0;
     hwpSearchState = undefined;
     hwpHighlights = [];
-    equationFontWarningShown = false;
-    chartWarningShown = false;
     page.style.display = '';
     page.style.background = '';
     pendingFetch?.abort();
@@ -60,12 +56,7 @@ function hwpFrame(index) {
     const parsed = new DOMParser().parseFromString(output, 'image/svg+xml');
     if (parsed.querySelector('parsererror')) throw new Error('SVG 표시 실패');
     const svg = parsed.documentElement;
-    if (!chartWarningShown && svg.querySelector('.hwp-ooxml-chart')) {
-        chartWarningShown = true;
-        window.Android.onHwpChartWarning(activeGeneration);
-    }
     const equationText = Array.from(svg.querySelectorAll('text[font-family="HyhwpEQ"]'));
-    const needsEquationWarning = equationText.some(element => /[\uE000-\uF8FF]/u.test(element.textContent));
     const hasEquationFont = userFonts.some(font => font.families.some(family => family.toLowerCase() === 'hyhwpeq'));
     for (const element of equationText) {
         if (hasEquationFont) break;
@@ -75,10 +66,6 @@ function hwpFrame(index) {
         element.textContent = result.text;
         element.setAttribute('font-family', 'serif');
         if (result.italic) element.setAttribute('font-style', 'italic');
-    }
-    if (!equationFontWarningShown && needsEquationWarning) {
-        equationFontWarningShown = true;
-        window.Android.onEquationFontWarning(activeGeneration);
     }
     for (const rect of hwpHighlights.filter(item => item.pageIndex === index)) {
         const mark = parsed.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -166,7 +153,7 @@ window.setHwpMode = (mode, index) => {
             if (active >= 0) window.Android.onPageShown(active, generation);
         }, {threshold: [0, 0.25, 0.5, 0.75, 1]});
         slots.forEach(slot => { hwpObserver.observe(slot); hwpActiveObserver.observe(slot); });
-        status.textContent = '시험용 한글 보기: 원본과 다르게 표시될 수 있습니다.';
+        status.textContent = '';
         window.showPage(index);
     } catch (error) { status.textContent = `페이지 표시 실패: ${error.message}`; }
 };
@@ -319,7 +306,7 @@ window.showPage = index => {
             frame.style.margin = 'auto';
         }
         page.replaceChildren(frame);
-        status.textContent = '시험용 한글 보기: 원본과 다르게 표시될 수 있습니다.';
+        status.textContent = '';
         window.Android.onPageShown(index, activeGeneration);
     } catch (error) { status.textContent = `페이지 표시 실패: ${error.message}`; }
 };

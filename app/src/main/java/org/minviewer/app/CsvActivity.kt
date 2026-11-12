@@ -16,6 +16,10 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.EditText
 import android.text.InputType
+import android.text.TextUtils
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.Gravity
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStreamReader
@@ -56,15 +60,14 @@ class CsvActivity : Activity() {
         encoding = savedInstanceState?.getString("encoding") ?: intent.getStringExtra("restore_encoding")
             ?.takeIf { it == "UTF-8" || it == "CP949" }
         val toolbar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.rgb(25, 45, 77))
-            minimumWidth = (240 * resources.displayMetrics.density).toInt()
         }
-        val toolbarScroll = HorizontalScrollView(this).apply {
-            isFillViewport = true
-            isHorizontalScrollBarEnabled = true
-            addView(toolbar)
+        val bottom = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(25, 45, 77))
         }
-        fun addButton(label: String, action: () -> Unit): Button = Button(this).apply {
+        fun addButton(parent: LinearLayout, label: String, action: () -> Unit): Button = Button(this).apply {
             text = label
             textSize = 12f
             setTextColor(Color.WHITE)
@@ -73,14 +76,19 @@ class CsvActivity : Activity() {
             minimumWidth = 0
             setPadding(0, 0, 0, 0)
             setOnClickListener { action() }
-            toolbar.addView(this, if (resources.configuration.screenWidthDp >= 600)
-                LinearLayout.LayoutParams((96 * resources.displayMetrics.density).toInt(), -2)
-            else LinearLayout.LayoutParams(0, -2, 1f))
+            parent.addView(this, LinearLayout.LayoutParams((56 * resources.displayMetrics.density).toInt(),
+                (48 * resources.displayMetrics.density).toInt()))
         }
-        addButton("뒤로") { finish() }
-        previous = addButton("이전") { if (page > 0) loadPage(page - 1) }
-        next = addButton("다음") { loadPage(page + 1) }
-        addButton("이동") {
+        addButton(toolbar, "뒤로") { finish() }
+        toolbar.addView(TextView(this).apply {
+            text = intent.getStringExtra("name") ?: intent.data?.lastPathSegment ?: "CSV 문서"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addButton(toolbar, "이동") {
             val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; hint = "행 번호" }
             android.app.AlertDialog.Builder(this).setTitle("행으로 이동").setView(input)
                 .setNegativeButton("취소", null).setPositiveButton("확인") { _, _ ->
@@ -90,7 +98,7 @@ class CsvActivity : Activity() {
                     } else loadPage(((row - 1) / PAGE_SIZE).toInt(), ((row - 1) % PAGE_SIZE).toInt())
                 }.show()
         }
-        encodingButton = addButton("인코딩") {
+        encodingButton = addButton(toolbar, "인코딩") {
             val options = arrayOf("UTF-8", "CP949")
             android.app.AlertDialog.Builder(this).setTitle("문자 인코딩").setItems(options) { _, index ->
                 encoding = options[index]
@@ -99,8 +107,28 @@ class CsvActivity : Activity() {
         }
         status = TextView(this).apply {
             text = "CSV를 불러오는 중입니다."
+            textSize = 12f
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(Color.WHITE)
+        }
+        val notice = TextView(this).apply {
+            visibility = View.GONE
             setPadding(12, 8, 12, 8)
         }
+        status.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val error = s?.toString()?.startsWith("CSV 오류:") == true
+                notice.text = if (error) s else ""
+                notice.visibility = if (error) View.VISIBLE else View.GONE
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        previous = addButton(bottom, "이전") { if (page > 0) loadPage(page - 1) }
+        bottom.addView(status, LinearLayout.LayoutParams(0, (48 * resources.displayMetrics.density).toInt(), 1f))
+        next = addButton(bottom, "다음") { loadPage(page + 1) }
         list = ListView(this)
         scroller = HorizontalScrollView(this).apply { addView(list) }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -120,9 +148,10 @@ class CsvActivity : Activity() {
                 view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
                 insets
             }
-            addView(toolbarScroll)
-            addView(status)
+            addView(toolbar)
+            addView(notice)
             addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(bottom)
         })
         loadPage(page)
     }

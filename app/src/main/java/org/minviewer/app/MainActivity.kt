@@ -55,8 +55,6 @@ class MainActivity : Activity() {
     private var incomingMimeType: String? = null
     private var loadGeneration = 0
     private var hwpMode = "single"
-    private var hwpEquationWarning = false
-    private var hwpChartWarning = false
     private var hwpZoom = 1f
     private var hwpSearchMessage = ""
     private var pendingHwpZoomRestore = false
@@ -195,7 +193,6 @@ class MainActivity : Activity() {
     private fun changeHwpMode(value: String) {
         if (hwpModes.visibility != View.VISIBLE) return
         hwpMode = value
-        updateHwpNotice()
         browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(value)},$pageIndex)", null)
         documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
     }
@@ -419,8 +416,6 @@ class MainActivity : Activity() {
     private fun loadDocument() {
         val uri = documentUri ?: return
         viewerControls.setDocumentNotice("")
-        hwpEquationWarning = false
-        hwpChartWarning = false
         hwpSearchMessage = ""
         home.visibility = View.GONE
         container.visibility = View.VISIBLE
@@ -623,7 +618,6 @@ class MainActivity : Activity() {
             val isHwp = selectedName.endsWith(".hwp", true) || selectedName.endsWith(".hwpx", true)
             hwpSearch.visibility = if (isHwp) View.VISIBLE else View.GONE
             hwpModes.visibility = if (isHwp) View.VISIBLE else View.GONE
-            if (isHwp) updateHwpNotice()
             list.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, (1..count).map { "$it" })
             val selected = pageIndex.coerceIn(0, count - 1)
             if (isHwp) browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(hwpMode)},$selected)", null)
@@ -642,18 +636,6 @@ class MainActivity : Activity() {
             if (this.generation != browserGeneration || generation != loadGeneration || isDestroyed || isFinishing) return@runOnUiThread
             pageIndex = index
             showHwpPosition()
-        }
-        @JavascriptInterface fun onEquationFontWarning(generation: Int) = runOnUiThread {
-            if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
-                hwpEquationWarning = true
-                updateHwpNotice()
-            }
-        }
-        @JavascriptInterface fun onHwpChartWarning(generation: Int) = runOnUiThread {
-            if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
-                hwpChartWarning = true
-                updateHwpNotice()
-            }
         }
         @JavascriptInterface fun onHwpPasswordRequired(generation: Int, retry: Boolean) = runOnUiThread {
             val source = documentSource
@@ -685,14 +667,6 @@ class MainActivity : Activity() {
         indicator.text = "${pageIndex + 1}/$pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
         indicator.contentDescription = "${pageIndex + 1} / $pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
         documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
-    }
-
-    private fun updateHwpNotice() {
-        val message = listOfNotNull(
-            if (hwpEquationWarning) "일부 수식은 대체 글꼴로 표시되거나 기호가 깨질 수 있습니다." else null,
-            if (hwpChartWarning) "차트 값·색상·모양이 원본과 다를 수 있습니다." else null,
-        ).joinToString(" ").let { if (it.isEmpty()) it else "$it 원본 문서와 비교해 주세요." }
-        viewerControls.setDocumentNotice(message)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

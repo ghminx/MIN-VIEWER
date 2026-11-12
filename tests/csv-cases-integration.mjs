@@ -40,6 +40,7 @@ async function open(name, expected) {
     return xml;
 }
 let xml = await open('min-paged.csv', '1-100행');
+assert.match(xml, /min-paged.csv/, 'CSV 파일명이 표시되지 않음');
 assert.match(xml, /row1/);
 const next = xml.match(/text="다음"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
 assert.ok(next);

@@ -41,7 +41,7 @@ try {
         }
         tap(xml, 'text', String(page));
         xml = await waitFor(new RegExp(`${page} / 35`));
-        if (page === 24) await waitFor(/차트 값·색상·모양이 원본과 다를 수 있습니다/);
+        assert.doesNotMatch(xml, /차트 값·색상·모양이 원본과 다를 수 있습니다/);
         tap(xml, 'content-desc', '목록');
         await delay(1000);
         run('shell', 'screencap', '-p', '/sdcard/min-hwp-quality.png');
