@@ -188,7 +188,7 @@ class HomeScreen(
     }
 
     private fun showLicenses() {
-        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지")
+        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지", "OpenSymbol 글꼴 고지", "기타 글꼴 라이선스", "Redland 계열 고지")
         AlertDialog.Builder(activity).setTitle("오픈소스 라이선스").setItems(labels) { _, index ->
             if (index == 0) {
                 AlertDialog.Builder(activity).setTitle(labels[index]).setMessage(
@@ -207,7 +207,10 @@ class HomeScreen(
                     3 -> "rhwp/notices/THIRD_PARTY_LICENSES.md"
                     4 -> "licenses/kordoc.txt"
                     5 -> "licenses/libreoffice/libexttextcat.txt"
-                    else -> "licenses/rhwp-transitive-notices.txt"
+                    6 -> "licenses/rhwp-transitive-notices.txt"
+                    7 -> "licenses/libreoffice/opensymbol.txt"
+                    8 -> "licenses/libreoffice/font-notices.txt"
+                    else -> "licenses/libreoffice/redland-notice.txt"
                 }
                 val web = WebView(activity).apply {
                     settings.javaScriptEnabled = false
