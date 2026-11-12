@@ -50,7 +50,7 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 - Apache 2.0, SIL OFL 등으로 배포되는 다른 글꼴 및 네이티브·Rust 전이 의존성은 포함 여부와 버전별 고지의 완전성을 추가 대조해야 함.
 - rhwp 0.9.0의 `Cargo.lock`과 `wasm32-unknown-unknown` 대상 Cargo metadata에서 일반·빌드 의존성을 따라 [253개 후보 패키지 목록](license/rhwp-wasm-cargo-candidates.tsv)을 정리함. 워크스페이스의 기능 통합과 빌드 의존성이 포함될 수 있으므로 최종 WASM에 실제 링크된 정확한 패키지 목록이나 라이선스 준수 판정은 아님.
 - 위 후보 중 250개는 로컬 Cargo 원본의 최상위 라이선스·고지 파일을 수집함. 나머지 `taffy`·`defmt-parser`·`alloc-stdlib`은 각 패키지에 기록된 정확한 [원본 커밋의 라이선스 파일](license/rhwp-upstream-licenses.tsv)을 추가로 확보함. 수집 결과는 `app/src/main/assets/licenses/rhwp-transitive-notices.txt`이며 보완 앱의 오픈소스 라이선스 화면에서도 확인 가능함.
-- 프로젝트 자체에는 아직 별도의 라이선스가 명시되지 않음. 제3자의 앱 소스 재사용 조건은 권리자의 별도 결정이 필요함.
+- MIN VIEWER 자체 코드에 [MIT 라이선스](../LICENSE)를 적용함. 제3자 코드와 수정된 제3자 파일에는 해당 구성 요소의 라이선스가 별도로 적용됨.
 
 ## 조치 및 검증 필요 사항
 

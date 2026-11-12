@@ -101,6 +101,6 @@ DOC·XLS·PPT는 우선 지원 대상이 아니며, 충분한 실문서 호환�
 - [엔진 평가](docs/ENGINE_EVALUATION.md) — 문서 엔진 비교와 측정
 - [개발 지침](AGENTS.md) — 구현 및 검증 원칙
 
-사용한 엔진과 라이브러리의 고지는 [app/src/main/assets/licenses](app/src/main/assets/licenses)에서 확인할 수 있음. 프로젝트 자체의 별도 라이선스는 아직 명시되지 않았음.
+MIN VIEWER의 자체 코드는 [MIT 라이선스](LICENSE)를 적용함. LibreOffice·rhwp 등 제3자 코드, 수정된 제3자 파일, 라이브러리와 글꼴은 각각의 원래 라이선스와 고지를 따름. 사용한 엔진과 라이브러리의 고지는 [app/src/main/assets/licenses](app/src/main/assets/licenses)에서 확인할 수 있음.
 
 v1.0.0 베타에 포함된 엔진의 정적 링크 및 제3자 구성 요소에 대한 배포 조건은 [라이선스 검토 기록](docs/RELEASE_LICENSE_REVIEW.md)과 같이 추가 확인이 필요함.
