@@ -22,7 +22,7 @@ class RecentDocuments(private val context: Context) {
     }
 
     fun add(uri: Uri, name: String) = synchronized(lock) {
-        if (context.contentResolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission }) return
+        if (uri.authority != "${context.packageName}.pdfnotes" && context.contentResolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission }) return
         val items = all()
         val previous = items.firstOrNull { it.uri == uri }
         val current = previous?.copy(name = name, openedAt = System.currentTimeMillis())

@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="MIN VIEWER" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false" android:allowBackup="false">
         <provider android:name=".ViewStateProvider" android:authorities="${applicationId}.viewstate" android:exported="false" />
+        <provider android:name=".PdfNoteProvider" android:authorities="${applicationId}.pdfnotes" android:exported="false" />
         <activity android:name=".PdfActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
         <activity android:name=".CsvActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
         <activity android:name=".FontsActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
