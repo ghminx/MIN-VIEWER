@@ -48,7 +48,9 @@ try {
     const center = "import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=[(x,y) for y in range(im.height) for x in range(im.width) if (lambda c:c[0]>220 and c[1]<60 and c[2]<60)(im.getpixel((x,y)))];assert p;print((min(x for x,y in p)+max(x for x,y in p))//2,(min(y for x,y in p)+max(y for x,y in p))//2)";
     const [x, y] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-after.png'], {encoding:'utf8'}).trim().split(' ');
     const moving = process.argv.includes('--moving');
-    const pinch = spawn(adb, ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, phone ? '350' : '200', phone ? '700' : '400', '3000', moving ? '60' : '0', moving ? '80' : '0'], {stdio:'inherit'});
+    const args = ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, phone ? '350' : '200', phone ? '700' : '400', '3000', moving ? '60' : '0', moving ? '80' : '0'];
+    if (process.argv.includes('--tail')) args.push('tail');
+    const pinch = spawn(adb, args, {stdio:'inherit'});
     const completed = new Promise((resolve, reject) => pinch.on('exit', code => code === 0 ? resolve() : reject(new Error(`핀치 입력 실패: ${code}`))));
     await delay(1600);
     run('shell', 'screencap', '-p', '/sdcard/min-zoom-during.png');

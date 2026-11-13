@@ -223,6 +223,17 @@ class PdfActivity : Activity() {
             scaleDetector.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) list.parent.requestDisallowInterceptTouchEvent(true)
         }
+        if (touchInDocument && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && !multiTouch) {
+            val cancel = MotionEvent.obtain(event)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            super.dispatchTouchEvent(cancel)
+            cancel.recycle()
+            multiTouch = true
+        }
+        if (touchInDocument && multiTouch) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) multiTouch = false
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> { touchX = event.rawX; touchY = event.rawY; multiTouch = false }
             MotionEvent.ACTION_POINTER_DOWN -> multiTouch = true

@@ -42,6 +42,13 @@ public class PinchGesture {
         }
         if (args.length > 4) SystemClock.sleep(Long.parseLong(args[4]));
         send(inject, manager, down, MotionEvent.ACTION_POINTER_UP | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, properties, coords);
+        if (args.length > 7) {
+            for (int i = 0; i < 4; i++) {
+                coords[0].y += 25;
+                SystemClock.sleep(30);
+                send(inject, manager, down, MotionEvent.ACTION_MOVE, 1, properties, coords);
+            }
+        }
         send(inject, manager, down, MotionEvent.ACTION_UP, 1, properties, coords);
     }
 

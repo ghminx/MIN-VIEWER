@@ -30,10 +30,11 @@ run('push', '.research/pinch-test/pinch.jar', '/data/local/tmp/minviewer-pinch.j
 const records = run('shell', 'content', 'query', '--uri', 'content://media/external/file', '--projection', '_id:_display_name');
 const id = records.split(/\r?\n/).find(line => line.includes('_display_name=office-zoom-anchor.pptx'))?.match(/_id=(\d+)/)?.[1];
 assert.ok(id);
-const marker = "import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=[(x,y) for y in range(im.height) for x in range(im.width) if (lambda c:c[0]>220 and c[1]<60 and c[2]<60)(im.getpixel((x,y)))];assert p;print((min(x for x,y in p)+max(x for x,y in p))//2,(min(y for x,y in p)+max(y for x,y in p))//2,max(x for x,y in p)-min(x for x,y in p)+1)";
+const marker = "import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=[(x,y) for y in range(im.height) for x in range(im.width) if (lambda c:c[0]>220 and c[1]<60 and c[2]<60)(im.getpixel((x,y)))];assert p;print((min(x for x,y in p)+max(x for x,y in p))//2,(min(y for x,y in p)+max(y for x,y in p))//2,max(x for x,y in p)-min(x for x,y in p)+1,max(y for x,y in p)-min(y for x,y in p)+1)";
 try {
-    run('shell', 'wm', 'size', '1600x1000');
-    run('shell', 'wm', 'density', '160');
+    const phone = process.argv.includes('--phone');
+    run('shell', 'wm', 'size', phone ? '1080x2400' : '1600x1000');
+    run('shell', 'wm', 'density', phone ? '420' : '160');
     run('shell', 'am', 'force-stop', 'org.minviewer.app');
     run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
     await waitFor(/LibreOffice 1 \/ 1[^\"]*100%/);
@@ -41,13 +42,14 @@ try {
     run('shell', 'screencap', '-p', '/sdcard/min-office-before.png');
     run('pull', '/sdcard/min-office-before.png', '.research/tablet-viewport-test/office-before.png');
     const [x, y, width] = execFileSync('python', ['-c', marker, '.research/tablet-viewport-test/office-before.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
-    const pinch = spawn(adb, ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', String(x), String(y), '200', '400', '3000'], {stdio: 'inherit'});
+    const pinch = spawn(adb, ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', String(x), String(y), phone ? '350' : '200', phone ? '700' : '400', '3000'], {stdio: 'inherit'});
     const completed = new Promise((resolve, reject) => pinch.on('exit', code => code === 0 ? resolve() : reject(new Error(`핀치 입력 실패: ${code}`))));
     await delay(1600);
     run('shell', 'screencap', '-p', '/sdcard/min-office-during.png');
     run('pull', '/sdcard/min-office-during.png', '.research/tablet-viewport-test/office-during.png');
-    const [duringX, duringY, duringWidth] = execFileSync('python', ['-c', marker, '.research/tablet-viewport-test/office-during.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
+    const [duringX, duringY, duringWidth, duringHeight] = execFileSync('python', ['-c', marker, '.research/tablet-viewport-test/office-during.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
     await completed;
+    assert.ok(Math.abs(duringWidth / duringHeight - 1) < 0.03, `확대 중 정사각형 변형: ${duringWidth}x${duringHeight}`);
     assert.ok(duringWidth > width * 1.1, '손을 뗄 때까지 확대된 화면 유지 필요');
     assert.ok(Math.hypot(duringX - x, duringY - y) < 50, `확대 중 중심 이동: ${Math.hypot(duringX - x, duringY - y).toFixed(1)}px`);
     await waitFor(/LibreOffice 1 \/ 1[^\"]*1[2-9][0-9]%/);
@@ -59,6 +61,15 @@ try {
     const distance = Math.hypot(afterX - x, afterY - y);
     assert.ok(distance < 50, `PPT 확대 중심 이동: ${distance.toFixed(1)}px`);
     console.log(`PPT 확대 중심 이동: ${distance.toFixed(1)}px`);
+    const shrink = spawn(adb, ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', String(afterX), String(afterY), phone ? '700' : '400', phone ? '350' : '200', '3000'], {stdio:'inherit'});
+    const shrunk = new Promise((resolve, reject) => shrink.on('exit', code => code === 0 ? resolve() : reject(new Error(`축소 입력 실패: ${code}`))));
+    await delay(1600);
+    run('shell', 'screencap', '-p', '/sdcard/min-office-shrinking.png');
+    run('pull', '/sdcard/min-office-shrinking.png', '.research/tablet-viewport-test/office-shrinking.png');
+    await shrunk;
+    const [, , shrinkWidth, shrinkHeight] = execFileSync('python', ['-c', marker, '.research/tablet-viewport-test/office-shrinking.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
+    assert.ok(Math.abs(shrinkWidth / shrinkHeight - 1) < 0.03, `축소 중 정사각형 변형: ${shrinkWidth}x${shrinkHeight}`);
+    console.log(`PPT 확대·축소 중 정사각형 비율 유지: ${duringWidth}x${duringHeight}, ${shrinkWidth}x${shrinkHeight}`);
 } finally {
     run('shell', 'wm', 'size', 'reset');
     run('shell', 'wm', 'density', 'reset');

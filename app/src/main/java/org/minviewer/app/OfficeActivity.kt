@@ -175,19 +175,29 @@ class OfficeActivity : Activity() {
                 val next = (zoom * kotlin.math.sqrt(detector.scaleFactor)).coerceIn(if (documentType == Document.DOCTYPE_SPREADSHEET) 0.5f else 1f, 4f)
                 val width = visibleSize(baseWidth, next, sheetWidth)
                 val height = visibleSize(baseHeight, next, sheetHeight)
-                val rect = pages.getOrNull(pageIndex) ?: intArrayOf(0, 0, baseWidth, baseHeight)
+                val rect = pages.getOrNull(pageIndex) ?: intArrayOf(0, 0,
+                    if (documentType == Document.DOCTYPE_PRESENTATION) sheetWidth else baseWidth,
+                    if (documentType == Document.DOCTYPE_PRESENTATION) sheetHeight else baseHeight)
                 val left = if (documentType == Document.DOCTYPE_SPREADSHEET) 0 else rect[0]
                 val top = if (documentType == Document.DOCTYPE_SPREADSHEET) 0 else rect[1]
                 val right = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetWidth else rect[0] + rect[2]
                 val bottom = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetHeight else rect[1] + rect[3]
-                val focusX = (pinchFractionX + (detector.focusX - pinchFocusStartX) / pinchArea.width()).coerceIn(0f, 1f)
-                val focusY = (pinchFractionY + (detector.focusY - pinchFocusStartY) / pinchArea.height()).coerceIn(0f, 1f)
+                val nextScale = minOf(image.width.toFloat() / width, image.height.toFloat() / height)
+                val nextLeft = (image.width - width * nextScale) / 2f
+                val nextTop = (image.height - height * nextScale) / 2f
+                val localX = pinchArea.left + pinchFractionX * pinchArea.width() + detector.focusX - pinchFocusStartX
+                val localY = pinchArea.top + pinchFractionY * pinchArea.height() + detector.focusY - pinchFocusStartY
+                val focusX = (localX - nextLeft) / (width * nextScale)
+                val focusY = (localY - nextTop) / (height * nextScale)
                 viewportX = (pinchAnchorX - width * focusX).toInt().coerceIn(left, (right - width).coerceAtLeast(left))
                 viewportY = (pinchAnchorY - height * focusY).toInt().coerceIn(top, (bottom - height).coerceAtLeast(top))
-                image.pivotX = pinchArea.left + pinchArea.width() * if (pinchWidth == width) pinchFractionX else (viewportX - pinchStartX).toFloat() / (pinchWidth - width)
-                image.pivotY = pinchArea.top + pinchArea.height() * if (pinchHeight == height) pinchFractionY else (viewportY - pinchStartY).toFloat() / (pinchHeight - height)
-                image.scaleX = pinchWidth.toFloat() / width
-                image.scaleY = pinchHeight.toFloat() / height
+                val scale = nextScale / (pinchArea.width() / pinchWidth)
+                image.pivotX = 0f
+                image.pivotY = 0f
+                image.scaleX = scale
+                image.scaleY = scale
+                image.translationX = nextLeft - pinchArea.left * scale + (pinchStartX - viewportX) * nextScale
+                image.translationY = nextTop - pinchArea.top * scale + (pinchStartY - viewportY) * nextScale
                 zoom = next
                 return true
             }
@@ -203,14 +213,15 @@ class OfficeActivity : Activity() {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         touchX = event.rawX; touchY = event.rawY; wasScaling = false
+                        pinchStartX = viewportX; pinchStartY = viewportY
                         view.parent.requestDisallowInterceptTouchEvent(true)
                         true
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true; view.parent.requestDisallowInterceptTouchEvent(true); true }
                     MotionEvent.ACTION_MOVE -> {
                         if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET)) {
-                            view.translationX = event.rawX - touchX
-                            view.translationY = event.rawY - touchY
+                            panTo(pinchStartX - ((event.rawX - touchX) * tileWidth / view.width).toInt(),
+                                pinchStartY - ((event.rawY - touchY) * tileHeight / view.height).toInt())
                         }
                         true
                     }
@@ -228,7 +239,7 @@ class OfficeActivity : Activity() {
                                 showPage(target)
                             }
                         } else if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) && view.width > 0 && view.height > 0 && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) {
-                            showPage(pageIndex, viewportX - (dx * tileWidth / view.width).toInt(), viewportY - (dy * tileHeight / view.height).toInt())
+                            panTo(pinchStartX - (dx * tileWidth / view.width).toInt(), pinchStartY - (dy * tileHeight / view.height).toInt())
                         } else if (!wasScaling && kotlin.math.abs(dx) <= 10 && kotlin.math.abs(dy) <= 10) {
                             view.translationX = 0f
                             view.translationY = 0f
@@ -501,6 +512,32 @@ class OfficeActivity : Activity() {
         super.onStop()
     }
 
+    private var panPending = false
+    private var panX = 0
+    private var panY = 0
+
+    private fun panTo(x: Int, y: Int) {
+        panX = x
+        panY = y
+        if (panPending) return
+        panPending = true
+        val index = pageIndex
+        val requestedZoom = zoom
+        val request = renderGeneration.incrementAndGet()
+        worker.execute {
+            try {
+                drawPage(index, x, y, requestedZoom, request)
+            } catch (error: Exception) {
+                if (!closed) runOnUiThread { if (!closed && request == renderGeneration.get()) status.text = "LibreOffice 오류: ${error.message}" }
+            } finally {
+                if (!closed) runOnUiThread {
+                    panPending = false
+                    if (!closed && request == renderGeneration.get() && (panX != x || panY != y)) panTo(panX, panY)
+                }
+            }
+        }
+    }
+
     private fun showPage(index: Int, x: Int = 0, y: Int = 0) {
         if (index !in 0 until pageCount) return
         if (index != swipeAnimationTarget) swipeAnimationTarget = -1
@@ -574,9 +611,6 @@ class OfficeActivity : Activity() {
                 if (sheet || presentation) {
                     sheetWidth = if (sheet) width else rect[2]
                     sheetHeight = if (sheet) height else rect[3]
-                }
-                if (documentType == Document.DOCTYPE_SPREADSHEET && image.layoutParams.height != -2) {
-                    image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, -2)
                 }
                 val preview = if (previousPage == index) capturePreview() else null
                 image.setImageBitmap(bitmap)
