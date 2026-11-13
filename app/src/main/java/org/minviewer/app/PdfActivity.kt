@@ -53,6 +53,7 @@ private class PdfPasswordRequired : IOException()
 
 class PdfActivity : Activity() {
     companion object { private var oldTemporaryFilesCleaned = false }
+    private data class ZoomAnchor(val page: Int, val x: Float, val y: Float, val focusX: Float, val focusY: Float)
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, ArrayBlockingQueue(32), ThreadPoolExecutor.DiscardOldestPolicy())
     private val cache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
@@ -73,6 +74,13 @@ class PdfActivity : Activity() {
     private var mode = 1
     private var restorePanel = false
     private var zoom = 1f
+    private var pinchZoom = 1f
+    private var pinchFocusX = 0f
+    private var pinchFocusY = 0f
+    private var pinchStartFocusX = 0f
+    private var pinchStartFocusY = 0f
+    private var zoomAnchor: ZoomAnchor? = null
+    private var pinchPreview: ImageView? = null
     private var searchMessage = ""
     private var highlightedPage = -1
     private var highlightedBounds = emptyList<RectF>()
@@ -115,9 +123,37 @@ class PdfActivity : Activity() {
                 "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }))
         status = controls.status
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), detector.focusX, detector.focusY)
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                pinchZoom = zoom
+                pinchFocusX = detector.focusX
+                pinchFocusY = detector.focusY
+                pinchStartFocusX = detector.focusX
+                pinchStartFocusY = detector.focusY
+                val location = IntArray(2)
+                list.getLocationInWindow(location)
+                list.pivotX = detector.focusX - location[0]
+                list.pivotY = detector.focusY - location[1]
                 return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                pinchZoom = (pinchZoom * kotlin.math.sqrt(detector.scaleFactor)).coerceIn(1f, 4f)
+                pinchFocusX = detector.focusX
+                pinchFocusY = detector.focusY
+                list.scaleX = pinchZoom / zoom
+                list.scaleY = pinchZoom / zoom
+                list.translationX = pinchFocusX - pinchStartFocusX
+                list.translationY = pinchFocusY - pinchStartFocusY
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (pinchZoom != zoom) showPinchPreview()
+                list.scaleX = 1f
+                list.scaleY = 1f
+                list.translationX = 0f
+                list.translationY = 0f
+                setZoom(pinchZoom, pinchStartFocusX, pinchStartFocusY, pinchFocusX, pinchFocusY)
             }
         }).apply { isQuickScaleEnabled = false }
         list = object : ListView(this) {
@@ -443,18 +479,67 @@ class PdfActivity : Activity() {
         }
     }
 
-    private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null) {
+    private fun showPinchPreview() {
+        pinchPreview?.let { horizontal.overlay.remove(it) }
+        pinchPreview = null
+        if (mode != 1) return
+        val row = list.getChildAt(0) as? LinearLayout ?: return
+        val page = row.getChildAt(0) as? ImageView ?: return
+        val drawable = page.drawable ?: return
+        val area = RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
+        page.imageMatrix.mapRect(area)
+        val matrix = android.graphics.Matrix()
+        page.transformMatrixToGlobal(matrix)
+        matrix.mapRect(area)
+        val location = IntArray(2)
+        horizontal.getLocationOnScreen(location)
+        area.offset(-location[0].toFloat(), -location[1].toFloat())
+        val preview = ImageView(this).apply {
+            setImageDrawable(drawable.constantState?.newDrawable() ?: drawable)
+            scaleType = ImageView.ScaleType.FIT_XY
+            layout(area.left.toInt(), area.top.toInt(), area.right.toInt(), area.bottom.toInt())
+        }
+        pinchPreview = preview
+        horizontal.overlay.add(preview)
+        horizontal.postDelayed({ if (pinchPreview === preview) finishPinchPreview() }, 2000)
+    }
+
+    private fun finishPinchPreview() {
+        val preview = pinchPreview ?: return
+        pinchPreview = null
+        preview.animate().alpha(0f).setDuration(120).withEndAction { horizontal.overlay.remove(preview) }.start()
+    }
+
+    private fun imageArea(page: ImageView): RectF? {
+        val drawable = page.drawable ?: return null
+        val location = IntArray(2)
+        page.getLocationInWindow(location)
+        return RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat()).also {
+            page.imageMatrix.mapRect(it)
+            it.offset(location[0].toFloat() + page.paddingLeft, location[1].toFloat() + page.paddingTop)
+        }
+    }
+
+    private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null, targetX: Float? = focusX, targetY: Float? = focusY) {
         val next = value.coerceIn(1f, 4f)
         if (next == zoom) return
+        val row = list.getChildAt(0) as? LinearLayout
+        val currentImage = row?.getChildAt(0) as? ImageView
+        val anchorArea = if (mode == 1 && focusX != null && focusY != null && currentImage != null) imageArea(currentImage) else null
+        val anchorX = if (anchorArea != null && anchorArea.width() > 0) (focusX!! - anchorArea.left) / anchorArea.width() else 0f
+        val anchorY = if (anchorArea != null && anchorArea.height() > 0) (focusY!! - anchorArea.top) / anchorArea.height() else 0f
+        zoomAnchor = if (anchorArea != null) ZoomAnchor(pageIndex, anchorX, anchorY, targetX!!, targetY!!) else null
         val ratio = next / zoom
         val location = IntArray(2)
         horizontal.getLocationInWindow(location)
         val x = focusX?.minus(location[0]) ?: horizontal.width / 2f
         val y = focusY?.minus(location[1]) ?: horizontal.height / 2f
-        val left = ((horizontal.scrollX + x) * ratio - x).toInt()
+        val targetLocalX = targetX?.minus(location[0]) ?: x
+        val targetLocalY = targetY?.minus(location[1]) ?: y
+        val left = ((horizontal.scrollX + x) * ratio - targetLocalX).toInt()
         val first = list.firstVisiblePosition
         val top = list.getChildAt(0)?.top ?: 0
-        val newTop = (y - (y - top) * ratio).toInt()
+        val newTop = (targetLocalY - (y - top) * ratio).toInt()
         zoom = next
         resizeDocument()
         list.setSelectionFromTop(first, newTop)
@@ -612,6 +697,17 @@ class PdfActivity : Activity() {
                     val height = if (mode == 1 && list.height > 0) minOf(imageHeight, (list.height * zoom).toInt()) else imageHeight
                     image.layoutParams = LinearLayout.LayoutParams(0, height, 1f)
                     image.setImageBitmap(bitmap)
+                    val anchor = zoomAnchor
+                    if (anchor != null && anchor.page == index) image.post {
+                        image.post {
+                            if (!closed && zoomAnchor === anchor && image.parent === row) imageArea(image)?.let { area ->
+                                horizontal.scrollBy((area.left + area.width() * anchor.x - anchor.focusX).toInt(), 0)
+                                list.scrollListBy((area.top + area.height() * anchor.y - anchor.focusY).toInt())
+                                zoomAnchor = null
+                                finishPinchPreview()
+                            }
+                        }
+                    }
                     if (pendingTarget == index) {
                         val generation = navigationGeneration
                         pendingTarget = null

@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.AbsListView
 import android.widget.TextView
 import android.widget.EditText
 import android.text.InputType
@@ -46,6 +47,18 @@ class CsvActivity : Activity() {
     private var zoom = 1f
     private var columns = 1
     private var statusBase = ""
+    private val windowRows = ArrayList<List<String>>()
+    private var windowStartPage = 0
+    private var windowEndPage = 0
+    private var windowHasNext = false
+    private var scrollArmed = false
+    private var lastVisibleRow = 0
+    private var loading = false
+    private var pinchZoom = 1f
+    private var pinchStartX = 0f
+    private var pinchStartY = 0f
+    private var pinchFocusX = 0f
+    private var pinchFocusY = 0f
     private var touchInDocument = false
     @Volatile private var generation = 0
     @Volatile private var closed = false
@@ -129,15 +142,71 @@ class CsvActivity : Activity() {
         previous = addButton(bottom, "이전") { if (page > 0) loadPage(page - 1) }
         bottom.addView(status, LinearLayout.LayoutParams(0, (48 * resources.displayMetrics.density).toInt(), 1f))
         next = addButton(bottom, "다음") { loadPage(page + 1) }
-        list = ListView(this)
+        list = ListView(this).apply {
+            setOnScrollListener(object : AbsListView.OnScrollListener {
+                override fun onScrollStateChanged(view: AbsListView?, state: Int) {
+                    if (state == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
+                        scrollArmed = true
+                        if (!loading && list.lastVisiblePosition >= list.count - 10 && windowHasNext) {
+                            scrollArmed = false
+                            loadPage(windowEndPage + 1, direction = 1)
+                        }
+                    }
+                }
+
+                override fun onScroll(view: AbsListView?, first: Int, visible: Int, total: Int) {
+                    if (loading || total == 0 || visible == 0) return
+                    val currentPage = windowStartPage + first / PAGE_SIZE
+                    if (currentPage != page) {
+                        page = currentPage
+                        previous.isEnabled = page > 0
+                        next.isEnabled = page < windowEndPage || windowHasNext
+                        updateRangeStatus()
+                        saveView()
+                    }
+                    if (scrollArmed && first + visible >= total - 10 && windowHasNext) {
+                        scrollArmed = false
+                        loadPage(windowEndPage + 1, direction = 1)
+                    } else if (scrollArmed && first < lastVisibleRow && first <= 10 && windowStartPage > 0) {
+                        scrollArmed = false
+                        loadPage(windowStartPage - 1, direction = -1)
+                    }
+                    lastVisibleRow = first
+                }
+            })
+        }
         scroller = HorizontalScrollView(this).apply { addView(list) }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                pinchZoom = zoom
+                pinchStartX = detector.focusX
+                pinchStartY = detector.focusY
+                pinchFocusX = pinchStartX
+                pinchFocusY = pinchStartY
+                val location = IntArray(2)
+                list.getLocationInWindow(location)
+                list.pivotX = pinchStartX - location[0]
+                list.pivotY = pinchStartY - location[1]
+                return true
+            }
+
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor))
+                pinchZoom = (pinchZoom * kotlin.math.sqrt(detector.scaleFactor)).coerceIn(1f, 4f)
+                pinchFocusX = detector.focusX
+                pinchFocusY = detector.focusY
+                list.scaleX = pinchZoom / zoom
+                list.scaleY = pinchZoom / zoom
+                list.translationX = pinchFocusX - pinchStartX
+                list.translationY = pinchFocusY - pinchStartY
                 return true
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
+                list.scaleX = 1f
+                list.scaleY = 1f
+                list.translationX = 0f
+                list.translationY = 0f
+                setZoom(pinchZoom, pinchStartX, pinchStartY, pinchFocusX, pinchFocusY)
                 saveView()
             }
         }).apply { isQuickScaleEnabled = false }
@@ -156,14 +225,16 @@ class CsvActivity : Activity() {
         loadPage(page)
     }
 
-    private fun loadPage(index: Int, rowInPage: Int = 0) {
+    private fun loadPage(index: Int, rowInPage: Int = 0, direction: Int = 0) {
         val uri = intent.data ?: run { status.text = "CSV 오류: 파일이 없습니다."; return }
+        if (loading) return
+        loading = true
         val request = ++generation
         val previousHasNext = next.isEnabled
         previous.isEnabled = false
         next.isEnabled = false
         encodingButton.isEnabled = false
-        status.text = "CSV를 불러오는 중입니다."
+        if (direction == 0) status.text = "CSV를 불러오는 중입니다."
         val selectedEncoding = encoding
         worker.execute {
             try {
@@ -203,6 +274,7 @@ class CsvActivity : Activity() {
                 val charset = current.charset
                 if (!closed) runOnUiThread {
                     if (!closed && request == generation) {
+                        loading = false
                         if ((index > 0 && rows.isEmpty()) || (rows.isNotEmpty() && rowInPage >= rows.size)) {
                             status.text = "CSV 오류: 해당 행이 없습니다."
                             previous.isEnabled = page > 0
@@ -210,20 +282,57 @@ class CsvActivity : Activity() {
                             encodingButton.isEnabled = true
                             return@runOnUiThread
                         }
-                        page = index
                         encoding = charset
                         RecentDocuments(this@CsvActivity).add(uri, intent.getStringExtra("name") ?: "document")
-                        columns = rows.maxOfOrNull { it.size } ?: 1
-                        list.adapter = RowAdapter(rows)
+                        val first = list.firstVisiblePosition
+                        val top = list.getChildAt(0)?.top ?: 0
+                        var restorePosition: Int? = null
+                        when (direction) {
+                            1 -> {
+                                windowRows.addAll(rows)
+                                windowEndPage = index
+                                windowHasNext = hasNext
+                                if (windowRows.size > PAGE_SIZE * 3) {
+                                    windowRows.subList(0, PAGE_SIZE).clear()
+                                    windowStartPage++
+                                    restorePosition = (first - PAGE_SIZE).coerceAtLeast(0)
+                                }
+                            }
+                            -1 -> {
+                                windowRows.addAll(0, rows)
+                                windowStartPage = index
+                                if (windowRows.size > PAGE_SIZE * 3) {
+                                    val removeCount = (windowRows.size - (windowEndPage - windowStartPage) * PAGE_SIZE).coerceIn(1, PAGE_SIZE)
+                                    windowRows.subList(windowRows.size - removeCount, windowRows.size).clear()
+                                    windowEndPage--
+                                    windowHasNext = true
+                                }
+                                restorePosition = first + rows.size
+                            }
+                            else -> {
+                                page = index
+                                windowStartPage = index
+                                windowEndPage = index
+                                windowHasNext = hasNext
+                                windowRows.clear()
+                                windowRows.addAll(rows)
+                                scrollArmed = false
+                                list.adapter = RowAdapter(windowRows)
+                                list.setSelection(rowInPage.coerceAtMost(rows.lastIndex.coerceAtLeast(0)))
+                            }
+                        }
+                        columns = windowRows.maxOfOrNull { it.size } ?: 1
                         applyZoom()
+                        restorePosition?.let { list.setSelectionFromTop(it, top) }
                         saveView()
-                        list.setSelection(rowInPage.coerceAtMost(rows.lastIndex.coerceAtLeast(0)))
                         setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                         previous.isEnabled = page > 0
-                        next.isEnabled = hasNext
+                        next.isEnabled = page < windowEndPage || windowHasNext
                         encodingButton.isEnabled = true
-                        statusBase = if (rows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.size}행 · $charset"
-                        updateZoomStatus()
+                        updateRangeStatus()
+                        if (direction == 0 && rowInPage >= PAGE_SIZE - 10 && windowHasNext) {
+                            list.post { if (!loading && windowEndPage == index && windowHasNext) loadPage(index + 1, direction = 1) }
+                        }
                     }
                 }
             } catch (error: Exception) {
@@ -231,6 +340,7 @@ class CsvActivity : Activity() {
                 cursor = null
                 if (!closed) runOnUiThread {
                     if (!closed && request == generation) {
+                        loading = false
                         val message = if (error is java.nio.charset.CharacterCodingException) {
                             "문자 인코딩을 확인하고 UTF-8 또는 CP949를 선택해 주세요."
                         } else error.message ?: "파일을 읽을 수 없습니다."
@@ -343,22 +453,36 @@ class CsvActivity : Activity() {
         (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
     }
 
-    private fun setZoom(value: Float) {
+    private fun setZoom(value: Float, focusX: Float, focusY: Float, targetX: Float, targetY: Float) {
         val next = value.coerceIn(1f, 4f)
         if (next == zoom || list.adapter == null) return
         val first = list.firstVisiblePosition
         val top = list.getChildAt(0)?.top ?: 0
         val horizontalPosition = scroller.scrollX
         val ratio = next / zoom
+        val location = IntArray(2)
+        scroller.getLocationInWindow(location)
+        val startX = focusX - location[0]
+        val startY = focusY - location[1]
+        val endX = targetX - location[0]
+        val endY = targetY - location[1]
         zoom = next
         applyZoom()
-        list.setSelectionFromTop(first, (top * ratio).toInt())
-        scroller.post { scroller.scrollTo((horizontalPosition * ratio).toInt(), 0) }
+        list.setSelectionFromTop(first, (endY - (startY - top) * ratio).toInt())
+        scroller.post { scroller.scrollTo(((horizontalPosition + startX) * ratio - endX).toInt(), 0) }
         updateZoomStatus()
     }
 
     private fun updateZoomStatus() {
         if (statusBase.isNotEmpty()) status.text = "$statusBase · ${(zoom * 100).toInt()}%"
+    }
+
+    private fun updateRangeStatus() {
+        val charset = encoding ?: return
+        val offset = (page - windowStartPage) * PAGE_SIZE
+        val count = (windowRows.size - offset).coerceIn(0, PAGE_SIZE)
+        statusBase = if (windowRows.isEmpty()) "CSV · 빈 파일 · $charset" else "CSV · ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + count}행 · $charset"
+        updateZoomStatus()
     }
 
     private fun saveView() {

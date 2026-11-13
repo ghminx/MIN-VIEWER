@@ -31,6 +31,8 @@ import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.GridView
 import android.widget.FrameLayout
+import android.widget.ArrayAdapter
+import android.widget.ListPopupWindow
 import org.libreoffice.kit.Document
 import org.libreoffice.kit.LibreOfficeKit
 import org.libreoffice.kit.Office
@@ -56,6 +58,7 @@ class OfficeActivity : Activity() {
     private lateinit var image: ImageView
     private lateinit var slideList: TextView
     private lateinit var viewport: ScrollView
+    private lateinit var documentArea: FrameLayout
     private lateinit var sheetLeftHint: TextView
     private lateinit var sheetRightHint: TextView
     private lateinit var contentRow: LinearLayout
@@ -72,6 +75,17 @@ class OfficeActivity : Activity() {
     private var pageIndex = 0
     private var viewportX = 0
     private var viewportY = 0
+    private var pinchStartX = 0
+    private var pinchStartY = 0
+    private var pinchWidth = 0
+    private var pinchHeight = 0
+    private var pinchAnchorX = 0f
+    private var pinchAnchorY = 0f
+    private var pinchFractionX = 0f
+    private var pinchFractionY = 0f
+    private var pinchFocusStartX = 0f
+    private var pinchFocusStartY = 0f
+    private var pinchArea = android.graphics.RectF()
     private var touchX = 0f
     private var touchY = 0f
     @Volatile private var zoom = 1f
@@ -80,6 +94,8 @@ class OfficeActivity : Activity() {
     private var tileHeight = 0
     private var baseWidth = 0
     private var baseHeight = 0
+    private var sheetWidth = 0
+    private var sheetHeight = 0
     @Volatile private var viewportWidth = 0
     @Volatile private var viewportHeight = 0
     private var wasScaling = false
@@ -133,10 +149,52 @@ class OfficeActivity : Activity() {
         status = controls.status
         slideList = controls.listButton.apply { visibility = View.GONE }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                if (tileWidth <= 0 || tileHeight <= 0 || image.drawable == null) return false
+                pinchStartX = viewportX
+                pinchStartY = viewportY
+                pinchWidth = tileWidth
+                pinchHeight = tileHeight
+                renderGeneration.incrementAndGet()
+                val location = IntArray(2)
+                image.getLocationInWindow(location)
+                val drawable = image.drawable
+                pinchArea = android.graphics.RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
+                image.imageMatrix.mapRect(pinchArea)
+                pinchArea.offset(image.paddingLeft.toFloat(), image.paddingTop.toFloat())
+                pinchFractionX = ((detector.focusX - location[0] - pinchArea.left) / pinchArea.width()).coerceIn(0f, 1f)
+                pinchFractionY = ((detector.focusY - location[1] - pinchArea.top) / pinchArea.height()).coerceIn(0f, 1f)
+                pinchFocusStartX = detector.focusX
+                pinchFocusStartY = detector.focusY
+                pinchAnchorX = pinchStartX + pinchWidth * pinchFractionX
+                pinchAnchorY = pinchStartY + pinchHeight * pinchFractionY
+                return true
+            }
+
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 wasScaling = true
-                setZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), detector.focusX, detector.focusY)
+                val next = (zoom * kotlin.math.sqrt(detector.scaleFactor)).coerceIn(if (documentType == Document.DOCTYPE_SPREADSHEET) 0.5f else 1f, 4f)
+                val width = visibleSize(baseWidth, next, sheetWidth)
+                val height = visibleSize(baseHeight, next, sheetHeight)
+                val rect = pages.getOrNull(pageIndex) ?: intArrayOf(0, 0, baseWidth, baseHeight)
+                val left = if (documentType == Document.DOCTYPE_SPREADSHEET) 0 else rect[0]
+                val top = if (documentType == Document.DOCTYPE_SPREADSHEET) 0 else rect[1]
+                val right = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetWidth else rect[0] + rect[2]
+                val bottom = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetHeight else rect[1] + rect[3]
+                val focusX = (pinchFractionX + (detector.focusX - pinchFocusStartX) / pinchArea.width()).coerceIn(0f, 1f)
+                val focusY = (pinchFractionY + (detector.focusY - pinchFocusStartY) / pinchArea.height()).coerceIn(0f, 1f)
+                viewportX = (pinchAnchorX - width * focusX).toInt().coerceIn(left, (right - width).coerceAtLeast(left))
+                viewportY = (pinchAnchorY - height * focusY).toInt().coerceIn(top, (bottom - height).coerceAtLeast(top))
+                image.pivotX = pinchArea.left + pinchArea.width() * if (pinchWidth == width) pinchFractionX else (viewportX - pinchStartX).toFloat() / (pinchWidth - width)
+                image.pivotY = pinchArea.top + pinchArea.height() * if (pinchHeight == height) pinchFractionY else (viewportY - pinchStartY).toFloat() / (pinchHeight - height)
+                image.scaleX = pinchWidth.toFloat() / width
+                image.scaleY = pinchHeight.toFloat() / height
+                zoom = next
                 return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }).apply { isQuickScaleEnabled = false }
         image = ImageView(this).apply {
@@ -145,15 +203,21 @@ class OfficeActivity : Activity() {
             setOnTouchListener { view, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        touchX = event.x; touchY = event.y; wasScaling = false
+                        touchX = event.rawX; touchY = event.rawY; wasScaling = false
                         view.parent.requestDisallowInterceptTouchEvent(true)
                         true
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true; view.parent.requestDisallowInterceptTouchEvent(true); true }
-                    MotionEvent.ACTION_MOVE -> true
+                    MotionEvent.ACTION_MOVE -> {
+                        if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET)) {
+                            view.translationX = event.rawX - touchX
+                            view.translationY = event.rawY - touchY
+                        }
+                        true
+                    }
                     MotionEvent.ACTION_UP -> {
-                        val dx = event.x - touchX
-                        val dy = event.y - touchY
+                        val dx = event.rawX - touchX
+                        val dy = event.rawY - touchY
                         val horizontalSwipe = kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
                             kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f
                         if (!wasScaling && documentType != Document.DOCTYPE_SPREADSHEET && zoom <= 1f && horizontalSwipe) {
@@ -166,7 +230,16 @@ class OfficeActivity : Activity() {
                             }
                         } else if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) && view.width > 0 && view.height > 0 && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) {
                             showPage(pageIndex, viewportX - (dx * tileWidth / view.width).toInt(), viewportY - (dy * tileHeight / view.height).toInt())
-                        } else if (!wasScaling && kotlin.math.abs(dx) <= 10 && kotlin.math.abs(dy) <= 10) view.performClick()
+                        } else if (!wasScaling && kotlin.math.abs(dx) <= 10 && kotlin.math.abs(dy) <= 10) {
+                            view.translationX = 0f
+                            view.translationY = 0f
+                            view.performClick()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        view.translationX = 0f
+                        view.translationY = 0f
                         true
                     }
                     else -> true
@@ -190,7 +263,7 @@ class OfficeActivity : Activity() {
                 if (changed && !slidePanelAnimating && pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }
-        val documentArea = FrameLayout(this).apply {
+        documentArea = FrameLayout(this).apply {
             addView(viewport, FrameLayout.LayoutParams(-1, -1))
             fun sheetHint(label: String, description: String, edge: Int): TextView = TextView(this@OfficeActivity).apply {
                 text = label
@@ -452,11 +525,13 @@ class OfficeActivity : Activity() {
         if (width <= 0 || height <= 0) throw IOException("문서 크기를 확인할 수 없습니다.")
         val rect = pages.getOrNull(index) ?: intArrayOf(0, 0, width, height)
         val sheet = documentType == Document.DOCTYPE_SPREADSHEET
-        val fullWidth = if (sheet) minOf(width, 6000) else rect[2]
-        val fullHeight = if (sheet) minOf(height.toLong(), fullWidth.toLong() * 1600 / 960).toInt() else rect[3]
-        val renderedWidth = maxOf(1, (fullWidth / requestedZoom).toInt())
         val availableWidth = if (viewportWidth > 0) viewportWidth else resources.displayMetrics.widthPixels
-        val renderedHeight = maxOf(1, (fullHeight / requestedZoom).toInt())
+        val availableHeight = if (viewportHeight > 0) viewportHeight else resources.displayMetrics.heightPixels
+        val sheetInitialWidth = (availableWidth / resources.displayMetrics.density * 20f).toInt().coerceIn(7000, 18000)
+        val fullWidth = if (sheet) minOf(width, sheetInitialWidth) else rect[2]
+        val fullHeight = if (sheet) minOf(height.toLong(), fullWidth.toLong() * availableHeight / availableWidth.coerceAtLeast(1)).toInt().coerceAtLeast(1) else rect[3]
+        val renderedWidth = maxOf(1, (fullWidth / requestedZoom).toInt()).let { if (sheet) minOf(width, it) else it }
+        val renderedHeight = maxOf(1, (fullHeight / requestedZoom).toInt()).let { if (sheet) minOf(height, it) else it }
         val left = if (sheet) 0 else rect[0]
         val top = if (sheet) 0 else rect[1]
         val right = if (sheet) width else rect[0] + rect[2]
@@ -496,10 +571,20 @@ class OfficeActivity : Activity() {
                 tileHeight = renderedHeight
                 baseWidth = fullWidth
                 baseHeight = fullHeight
+                if (sheet) {
+                    sheetWidth = width
+                    sheetHeight = height
+                }
                 if (documentType == Document.DOCTYPE_SPREADSHEET && image.layoutParams.height != -2) {
                     image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, -2)
                 }
+                val preview = if (previousPage == index) capturePreview() else null
                 image.setImageBitmap(bitmap)
+                image.scaleX = 1f
+                image.scaleY = 1f
+                image.translationX = 0f
+                image.translationY = 0f
+                preview?.animate()?.alpha(0f)?.setDuration(120)?.withEndAction { documentArea.overlay.remove(preview) }?.start()
                 sheetLeftHint.visibility = if (sheet && x > left) View.VISIBLE else View.GONE
                 sheetRightHint.visibility = if (sheet && x.toLong() + renderedWidth < right.toLong()) View.VISIBLE else View.GONE
                 if (index == swipeAnimationTarget) {
@@ -518,18 +603,40 @@ class OfficeActivity : Activity() {
         }
     }
 
+    private fun visibleSize(base: Int, factor: Float, limit: Int): Int =
+        maxOf(1, (base / factor).toInt()).let { if (documentType == Document.DOCTYPE_SPREADSHEET && limit > 0) minOf(limit, it) else it }
+
+    private fun capturePreview(): ImageView? {
+        if (image.scaleX == 1f && image.scaleY == 1f && image.translationX == 0f && image.translationY == 0f) return null
+        val drawable = image.drawable ?: return null
+        val area = android.graphics.RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
+        image.imageMatrix.mapRect(area)
+        val matrix = android.graphics.Matrix()
+        image.transformMatrixToGlobal(matrix)
+        matrix.mapRect(area)
+        val location = IntArray(2)
+        documentArea.getLocationOnScreen(location)
+        area.offset(-location[0].toFloat(), -location[1].toFloat())
+        return ImageView(this).apply {
+            setImageDrawable(drawable.constantState?.newDrawable() ?: drawable)
+            scaleType = ImageView.ScaleType.FIT_XY
+            layout(area.left.toInt(), area.top.toInt(), area.right.toInt(), area.bottom.toInt())
+            documentArea.overlay.add(this)
+        }
+    }
+
     private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null) {
-        val next = value.coerceIn(1f, 4f)
+        val next = value.coerceIn(if (documentType == Document.DOCTYPE_SPREADSHEET) 0.5f else 1f, 4f)
         if (next == zoom) return
         val previousZoom = zoom
         zoom = next
         if (pageCount > 0 && baseWidth > 0 && baseHeight > 0) {
-            val nextWidth = maxOf(1, (baseWidth / next).toInt())
+            val nextWidth = visibleSize(baseWidth, next, sheetWidth)
             val availableWidth = if (viewportWidth > 0) viewportWidth else resources.displayMetrics.widthPixels
             val availableHeight = if (viewportHeight > 0) viewportHeight else resources.displayMetrics.heightPixels
-            val nextHeight = maxOf(1, (baseHeight / next).toInt())
-            val oldWidth = maxOf(1, (baseWidth / previousZoom).toInt())
-            val oldHeight = maxOf(1, (baseHeight / previousZoom).toInt())
+            val nextHeight = visibleSize(baseHeight, next, sheetHeight)
+            val oldWidth = visibleSize(baseWidth, previousZoom, sheetWidth)
+            val oldHeight = visibleSize(baseHeight, previousZoom, sheetHeight)
             val location = IntArray(2)
             image.getLocationInWindow(location)
             val drawable = image.drawable
@@ -722,14 +829,20 @@ class OfficeActivity : Activity() {
 
     private fun showSheetList() {
         if (sheetNames.isEmpty()) return
-        val dialog = AlertDialog.Builder(this).setTitle("시트 목록")
-            .setSingleChoiceItems(sheetNames.toTypedArray(), pageIndex) { dialog, position ->
-                dialog.dismiss()
+        val popup = ListPopupWindow(this).apply {
+            anchorView = slideList
+            isModal = true
+            setAdapter(ArrayAdapter(this@OfficeActivity, android.R.layout.simple_list_item_single_choice, sheetNames))
+            width = minOf((240 * resources.displayMetrics.density).toInt(), resources.displayMetrics.widthPixels)
+            height = minOf((sheetNames.size * 48 * resources.displayMetrics.density).toInt(), (320 * resources.displayMetrics.density).toInt())
+            setOnItemClickListener { _, _, position, _ ->
+                dismiss()
                 if (position != pageIndex) showPage(position)
             }
-            .setNegativeButton("닫기", null)
-            .create()
-        dialog.show()
+        }
+        popup.show()
+        popup.listView?.choiceMode = android.widget.ListView.CHOICE_MODE_SINGLE
+        popup.listView?.setItemChecked(pageIndex, true)
     }
 
     private fun showWordPageList() {

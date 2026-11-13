@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const adb = '.research/sdk/platform-tools/adb.exe';
@@ -42,7 +43,21 @@ try {
     execFileSync('python', ['-c', check, '.research/pdf-test/min-zoom-before.png', '.research/pdf-test/min-zoom-after.png'], {stdio:'inherit'});
     const center = "import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=[(x,y) for y in range(im.height) for x in range(im.width) if (lambda c:c[0]>220 and c[1]<60 and c[2]<60)(im.getpixel((x,y)))];assert p;print((min(x for x,y in p)+max(x for x,y in p))//2,(min(y for x,y in p)+max(y for x,y in p))//2)";
     const [x, y] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-after.png'], {encoding:'utf8'}).trim().split(' ');
-    run('shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, '200', '400');
+    const pinch = spawn(adb, ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, '200', '400', '3000'], {stdio:'inherit'});
+    const completed = new Promise((resolve, reject) => pinch.on('exit', code => code === 0 ? resolve() : reject(new Error(`핀치 입력 실패: ${code}`))));
+    await delay(1600);
+    run('shell', 'screencap', '-p', '/sdcard/min-zoom-during.png');
+    run('pull', '/sdcard/min-zoom-during.png', '.research/pdf-test/min-zoom-during.png');
+    const [duringX, duringY] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-during.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
+    await completed;
+    assert.ok(Math.hypot(duringX - Number(x), duringY - Number(y)) < 30, 'PDF 확대 중 중심 유지 필요');
+    for (let frame = 0; frame < 5; frame++) {
+        const path = `.research/pdf-test/min-zoom-release-${frame}.png`;
+        writeFileSync(path, execFileSync(adb, ['exec-out', 'screencap', '-p']));
+        const [frameX, frameY] = execFileSync('python', ['-c', center, path], {encoding:'utf8'}).trim().split(' ').map(Number);
+        const jump = Math.hypot(frameX - duringX, frameY - duringY);
+        assert.ok(jump <= 3, `PDF 손을 뗀 직후 ${frame}번째 화면 이동: ${jump.toFixed(1)}px`);
+    }
     await delay(1500);
     run('shell', 'screencap', '-p', '/sdcard/min-zoom-anchor.png');
     run('pull', '/sdcard/min-zoom-anchor.png', '.research/pdf-test/min-zoom-anchor.png');
