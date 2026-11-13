@@ -25,7 +25,6 @@ import android.widget.ImageView
 import android.widget.EditText
 import android.text.InputType
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.AbsListView
 import android.widget.BaseAdapter
@@ -57,7 +56,7 @@ class OfficeActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var image: ImageView
     private lateinit var slideList: TextView
-    private lateinit var viewport: ScrollView
+    private lateinit var viewport: FrameLayout
     private lateinit var documentArea: FrameLayout
     private lateinit var sheetLeftHint: TextView
     private lateinit var sheetRightHint: TextView
@@ -246,8 +245,7 @@ class OfficeActivity : Activity() {
                 }
             }
         }
-        viewport = ScrollView(this).apply {
-            isFillViewport = true
+        viewport = FrameLayout(this).apply {
             setBackgroundColor(if (ThemePreferences.isDark(this@OfficeActivity)) Color.rgb(41, 47, 51) else Color.rgb(232, 235, 239))
             addView(image, android.widget.FrameLayout.LayoutParams(-1, -1))
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
@@ -528,10 +526,12 @@ class OfficeActivity : Activity() {
         val availableWidth = if (viewportWidth > 0) viewportWidth else resources.displayMetrics.widthPixels
         val availableHeight = if (viewportHeight > 0) viewportHeight else resources.displayMetrics.heightPixels
         val sheetInitialWidth = (availableWidth / resources.displayMetrics.density * 20f).toInt().coerceIn(7000, 18000)
-        val fullWidth = if (sheet) minOf(width, sheetInitialWidth) else rect[2]
-        val fullHeight = if (sheet) minOf(height.toLong(), fullWidth.toLong() * availableHeight / availableWidth.coerceAtLeast(1)).toInt().coerceAtLeast(1) else rect[3]
-        val renderedWidth = maxOf(1, (fullWidth / requestedZoom).toInt()).let { if (sheet) minOf(width, it) else it }
-        val renderedHeight = maxOf(1, (fullHeight / requestedZoom).toInt()).let { if (sheet) minOf(height, it) else it }
+        val presentation = documentType == Document.DOCTYPE_PRESENTATION
+        val fit = minOf(availableWidth.toFloat() / rect[2], availableHeight.toFloat() / rect[3])
+        val fullWidth = if (sheet) minOf(width, sheetInitialWidth) else if (presentation) (availableWidth / fit).toInt() else rect[2]
+        val fullHeight = if (sheet) minOf(height.toLong(), fullWidth.toLong() * availableHeight / availableWidth.coerceAtLeast(1)).toInt().coerceAtLeast(1) else if (presentation) (availableHeight / fit).toInt() else rect[3]
+        val renderedWidth = maxOf(1, (fullWidth / requestedZoom).toInt()).let { if (sheet) minOf(width, it) else minOf(rect[2], it) }
+        val renderedHeight = maxOf(1, (fullHeight / requestedZoom).toInt()).let { if (sheet) minOf(height, it) else minOf(rect[3], it) }
         val left = if (sheet) 0 else rect[0]
         val top = if (sheet) 0 else rect[1]
         val right = if (sheet) width else rect[0] + rect[2]
@@ -571,9 +571,9 @@ class OfficeActivity : Activity() {
                 tileHeight = renderedHeight
                 baseWidth = fullWidth
                 baseHeight = fullHeight
-                if (sheet) {
-                    sheetWidth = width
-                    sheetHeight = height
+                if (sheet || presentation) {
+                    sheetWidth = if (sheet) width else rect[2]
+                    sheetHeight = if (sheet) height else rect[3]
                 }
                 if (documentType == Document.DOCTYPE_SPREADSHEET && image.layoutParams.height != -2) {
                     image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, -2)
@@ -604,7 +604,7 @@ class OfficeActivity : Activity() {
     }
 
     private fun visibleSize(base: Int, factor: Float, limit: Int): Int =
-        maxOf(1, (base / factor).toInt()).let { if (documentType == Document.DOCTYPE_SPREADSHEET && limit > 0) minOf(limit, it) else it }
+        maxOf(1, (base / factor).toInt()).let { if ((documentType == Document.DOCTYPE_SPREADSHEET || documentType == Document.DOCTYPE_PRESENTATION) && limit > 0) minOf(limit, it) else it }
 
     private fun capturePreview(): ImageView? {
         if (image.scaleX == 1f && image.scaleY == 1f && image.translationX == 0f && image.translationY == 0f) return null

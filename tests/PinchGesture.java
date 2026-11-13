@@ -10,6 +10,8 @@ public class PinchGesture {
         float y = Float.parseFloat(args[1]);
         float start = Float.parseFloat(args[2]);
         float end = Float.parseFloat(args[3]);
+        float moveX = args.length > 5 ? Float.parseFloat(args[5]) : 0;
+        float moveY = args.length > 6 ? Float.parseFloat(args[6]) : 0;
         Class<?> managerClass = Class.forName("android.hardware.input.InputManagerGlobal");
         Object manager = managerClass.getMethod("getInstance").invoke(null);
         Method inject = managerClass.getMethod("injectInputEvent", InputEvent.class, int.class);
@@ -31,8 +33,10 @@ public class PinchGesture {
         send(inject, manager, down, MotionEvent.ACTION_POINTER_DOWN | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, properties, coords);
         for (int i = 1; i <= 20; i++) {
             float distance = start + (end - start) * i / 20;
-            coords[0].x = x - distance / 2;
-            coords[1].x = x + distance / 2;
+            coords[0].x = x + moveX * i / 20 - distance / 2;
+            coords[1].x = x + moveX * i / 20 + distance / 2;
+            coords[0].y = y + moveY * i / 20;
+            coords[1].y = y + moveY * i / 20;
             SystemClock.sleep(25);
             send(inject, manager, down, MotionEvent.ACTION_MOVE, 2, properties, coords);
         }
