@@ -715,7 +715,9 @@ class OfficeActivity : Activity() {
     private fun showSlideList() {
         if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0 || slidePanelAnimating) return
         closeSlidePanel?.let { it(); return }
-        val wide = resources.configuration.screenWidthDp >= 840
+        val config = resources.configuration
+        val wide = config.screenWidthDp >= 840 ||
+            (config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp)
         val active = AtomicBoolean(true)
         val cache = object : LruCache<Int, Bitmap>(4 * 1024 * 1024) {
             override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount

@@ -48,7 +48,9 @@ try {
     const center = "import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=[(x,y) for y in range(im.height) for x in range(im.width) if (lambda c:c[0]>220 and c[1]<60 and c[2]<60)(im.getpixel((x,y)))];assert p;print((min(x for x,y in p)+max(x for x,y in p))//2,(min(y for x,y in p)+max(y for x,y in p))//2)";
     const [x, y] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-after.png'], {encoding:'utf8'}).trim().split(' ');
     const moving = process.argv.includes('--moving');
+    const shrinking = process.argv.includes('--shrink');
     const args = ['shell', 'CLASSPATH=/data/local/tmp/minviewer-pinch.jar', 'app_process', '/system/bin', 'PinchGesture', x, y, phone ? '350' : '200', phone ? '700' : '400', '3000', moving ? '60' : '0', moving ? '80' : '0'];
+    if (shrinking) [args[7], args[8]] = [args[8], args[7]];
     if (process.argv.includes('--tail')) args.push('tail');
     const pinch = spawn(adb, args, {stdio:'inherit'});
     const completed = new Promise((resolve, reject) => pinch.on('exit', code => code === 0 ? resolve() : reject(new Error(`핀치 입력 실패: ${code}`))));
@@ -61,7 +63,7 @@ try {
         writeFileSync(path, execFileSync(adb, ['exec-out', 'screencap', '-p']));
     }
     const [duringX, duringY] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-during.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
-    assert.ok(Math.hypot(duringX - Number(x) - (moving ? 60 : 0), duringY - Number(y) - (moving ? 80 : 0)) < 30, 'PDF 확대 중 중심 유지 필요');
+    if (!shrinking) assert.ok(Math.hypot(duringX - Number(x) - (moving ? 60 : 0), duringY - Number(y) - (moving ? 80 : 0)) < 30, 'PDF 확대 중 중심 유지 필요');
     for (let frame = 0; frame < 5; frame++) {
         const path = `.research/pdf-test/min-zoom-release-${frame}.png`;
         const [frameX, frameY] = execFileSync('python', ['-c', center, path], {encoding:'utf8'}).trim().split(' ').map(Number);
@@ -72,7 +74,7 @@ try {
     run('shell', 'screencap', '-p', '/sdcard/min-zoom-anchor.png');
     run('pull', '/sdcard/min-zoom-anchor.png', '.research/pdf-test/min-zoom-anchor.png');
     const [afterX, afterY] = execFileSync('python', ['-c', center, '.research/pdf-test/min-zoom-anchor.png'], {encoding:'utf8'}).trim().split(' ').map(Number);
-    const delta = Math.hypot(afterX - Number(x) - (moving ? 60 : 0), afterY - Number(y) - (moving ? 80 : 0));
+    const delta = shrinking ? Math.hypot(afterX - duringX, afterY - duringY) : Math.hypot(afterX - Number(x) - (moving ? 60 : 0), afterY - Number(y) - (moving ? 80 : 0));
     assert.ok(delta < 30, `확대 중심 이동: ${delta.toFixed(1)}px`);
     console.log(`확대 중심 이동: ${delta.toFixed(1)}px`);
 } finally {
