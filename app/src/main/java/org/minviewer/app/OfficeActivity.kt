@@ -447,7 +447,9 @@ class OfficeActivity : Activity() {
                         slideList.visibility = View.VISIBLE
                     }
                 }
-                drawPage(pageIndex.coerceIn(0, pageCount - 1), viewportX, viewportY, zoom, renderGeneration.incrementAndGet())
+                if(documentType==Document.DOCTYPE_TEXT&&extension=="docx"&&passwordAttempts==0) {
+                    openWordPageViewer(opened,file)
+                }else drawPage(pageIndex.coerceIn(0, pageCount - 1), viewportX, viewportY, zoom, renderGeneration.incrementAndGet())
             } catch (error: Exception) {
                 closeDocument()
                 if (!closed) runOnUiThread { if (!closed) status.text = "LibreOffice 오류: ${error.message}" }
@@ -496,6 +498,39 @@ class OfficeActivity : Activity() {
         val configured = original.replaceFirst(marker, "$marker\n<dir>$userDirectory</dir>\n$aliases")
         val fontConfig = File(applicationInfo.dataDir, "etc/fonts/fonts.conf")
         if (!fontConfig.isFile || fontConfig.readText(Charsets.UTF_8) != configured) fontConfig.writeText(configured, Charsets.UTF_8)
+    }
+
+    private fun openWordPageViewer(opened: Document, source: File) {
+        val directory=File(cacheDir,"word-view/${java.util.UUID.randomUUID()}")
+        check(directory.mkdirs()) {"Word 읽기 폴더를 만들 수 없습니다."}
+        var launched=false
+        try {
+            val background=File(directory,"background.pdf")
+            val options="""{"ReduceImageResolution":{"type":"boolean","value":"false"},"UseLosslessCompression":{"type":"boolean","value":"true"}}"""
+            check(opened.saveAs(android.net.Uri.fromFile(background).toString(),"pdf",options)!=0){"Word 페이지를 준비할 수 없습니다."}
+            android.os.ParcelFileDescriptor.open(background,android.os.ParcelFileDescriptor.MODE_READ_ONLY).use {descriptor->
+                android.graphics.pdf.PdfRenderer(descriptor).use {pdf->
+                    check(pdf.pageCount==pageCount){"Word 페이지 수가 달라졌습니다."}
+                    pages.forEachIndexed {index,rect->pdf.openPage(index).use {page->
+                        check(kotlin.math.abs(page.width.toDouble()/page.height-rect[2].toDouble()/rect[3])<0.02){"Word 페이지 비율이 달라졌습니다."}
+                    }}
+                }
+            }
+            source.copyTo(File(directory,"source.docx"))
+            val build=assets.open("program/versionrc").bufferedReader().useLines {lines->lines.map(String::trim).firstOrNull{it.startsWith("buildid=")}?.substringAfter('=')}
+                ?:throw IOException("문서 엔진의 빌드 정보를 읽을 수 없습니다.")
+            File(directory,"profile.txt").writeText("LibreOfficeKit/$build")
+            if(closed)return
+            runOnUiThread {
+                if(!closed){
+                    startActivity(Intent(this,PdfActivity::class.java).setData(intent.data).addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
+                        .putExtra("name",intent.getStringExtra("name")).putExtra("word_snapshot",directory.name)
+                        .putExtra("restore_page",pageIndex).putExtra("restore_zoom",zoom))
+                    finish()
+                }else directory.deleteRecursively()
+            }
+            launched=true
+        }finally{if(!launched)directory.deleteRecursively()}
     }
 
     private fun beginOfficeInk() {
@@ -818,6 +853,7 @@ class OfficeActivity : Activity() {
         val uri = intent.data ?: return
         if (!openedSuccessfully) return
         val currentView = ViewPosition(pageIndex, zoom, viewportX, viewportY)
+        if (intent.getStringExtra("name")?.endsWith(".docx",true)==true&&passwordAttempts==0) return
         if (recentRegistered && currentView == lastSavedView) return
         val state = Bundle().apply {
             putString("uri", uri.toString())

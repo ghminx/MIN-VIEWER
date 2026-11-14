@@ -147,6 +147,10 @@ internal object UiIcon {
             "올가미" -> { paint.pathEffect = DashPathEffect(floatArrayOf(3f,3f),0f); canvas.drawOval(3f,4f,21f,18f,paint); paint.pathEffect = null; path(5f,15f,3f,21f,8f,22f) }
             "실행 취소", "다시 실행" -> { if (kind == "다시 실행") {canvas.save();canvas.scale(-1f,1f,12f,12f)}; path(8f,4f,3f,9f,8f,14f); val p = Path();p.moveTo(3f,9f);p.lineTo(13f,9f);p.quadTo(21f,9f,21f,19f);canvas.drawPath(p,paint);if(kind=="다시 실행")canvas.restore() }
             "격자", "목록" -> for (y in listOf(3f,14f)) for (x in listOf(3f,14f)) canvas.drawRoundRect(x,y,x+7,y+7,1f,1f,paint)
+            "한쪽 보기" -> canvas.drawRoundRect(5f,2f,19f,22f,1f,1f,paint)
+            "두쪽 보기" -> {canvas.drawRoundRect(2f,4f,10f,20f,1f,1f,paint);canvas.drawRoundRect(14f,4f,22f,20f,1f,1f,paint)}
+            "연속 보기" -> {path(5f,1f,5f,8f,19f,8f,19f,1f);canvas.drawRoundRect(5f,12f,19f,22f,1f,1f,paint)}
+            "화면 맞춤" -> {path(3f,8f,3f,3f,8f,3f);path(16f,3f,21f,3f,21f,8f);path(21f,16f,21f,21f,16f,21f);path(8f,21f,3f,21f,3f,16f);canvas.drawRect(8f,7f,16f,17f,paint)}
             "행 목록" -> for (y in listOf(5f,12f,19f)) {line(3f,y,4f,y);line(8f,y,21f,y)}
             "최근" -> {canvas.drawCircle(12f,12f,9f,paint);path(12f,6f,12f,12f,17f,12f)}
             "검색" -> {canvas.drawCircle(10f,10f,6.5f,paint);line(15f,15f,21f,21f)}

@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private var incomingMimeType: String? = null
     private var loadGeneration = 0
     private var hwpMode = "single"
+    private var hwpViewing = PageViewing()
     private var hwpZoom = 1f
     private var hwpInkSnapshot:HwpPdfSnapshot?=null
     private var hwpInkPreparing=false
@@ -78,7 +79,7 @@ class MainActivity : Activity() {
         android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
             override fun onSingleTapConfirmed(event:MotionEvent):Boolean {
                 val view=browser?:return false
-                if(hwpMode=="continuous"||hwpZoom>1.01f||pageCount==0)return false
+                if(hwpViewing.scrolling||hwpZoom>1.01f||pageCount==0)return false
                 val location=IntArray(2);view.getLocationOnScreen(location)
                 val x=event.rawX-location[0]
                 val direction=ViewerControls.pageTapDirection(x,view.width)
@@ -103,7 +104,7 @@ class MainActivity : Activity() {
             else savedInstanceState?.getInt("page") ?: 0
         listVisible = savedInstanceState?.getBoolean("list") ?: false
         hwpMode = savedInstanceState?.getString("hwpMode")?.takeIf { it in listOf("continuous", "single", "spread") } ?: "single"
-        hwpZoom = savedInstanceState?.getFloat("hwpZoom") ?: 1f
+        hwpZoom = 1f
         recent = RecentDocuments(this)
         buildScreen()
         home.restoreState(savedInstanceState)
@@ -171,11 +172,11 @@ class MainActivity : Activity() {
         viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpSearch.visibility == View.VISIBLE) searchHwp() },
             { listVisible = !listVisible; updateLayout() },
             listOf("한쪽 보기" to { changeHwpMode("single") }, "두쪽 보기" to { changeHwpMode("spread") },
-                "연속 보기" to { changeHwpMode("continuous") },
+                "페이지 넘김" to { changeHwpViewing(hwpViewing.copy(scrolling=false)) }, "세로 스크롤" to { changeHwpViewing(hwpViewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeHwpViewing(hwpViewing.copy(cover=!hwpViewing.cover)) },
                 "다음 검색 결과" to { if (hwpNextSearch.visibility == View.VISIBLE) hwpNextSearch.performClick() },
                 "다른 파일 열기" to { pickDocument() }),
-            selectedViewMode={when(hwpMode){"continuous"->"연속 보기";"spread"->"두쪽 보기";else->"한쪽 보기"}},
-            enabledMenuItem={name->when(name){"다음 검색 결과"->hwpNextSearch.visibility==View.VISIBLE;else->pageCount>0}},onFit={browser?.zoomBy(1f/hwpZoom)})
+            selectedMenuItem={name->when(name){"한쪽 보기"->hwpColumns()==1;"두쪽 보기"->hwpColumns()==2;"페이지 넘김"->!hwpViewing.scrolling;"세로 스크롤"->hwpViewing.scrolling;"첫 페이지를 표지로 보기"->hwpViewing.cover;else->false}},
+            enabledMenuItem={name->when(name){"두쪽 보기"->pageCount>0&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"다음 검색 결과"->hwpNextSearch.visibility==View.VISIBLE;else->pageCount>0}},onFit={resetHwpZoom();showPage(pageIndex)})
         indicator = viewerControls.status
         viewerControls.setLocationAction {viewerControls.showPageJump(pageIndex,pageCount)}
         container.addView(viewerControls)
@@ -220,11 +221,27 @@ class MainActivity : Activity() {
         updateLayout()
     }
 
-    private fun changeHwpMode(value: String) {
-        if (hwpModes.visibility != View.VISIBLE) return
-        hwpMode = value
-        browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(value)},$pageIndex)", null)
-        documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
+    private fun hwpColumns()=hwpViewing.columns(resources.configuration.screenWidthDp,resources.configuration.screenHeightDp)
+
+    private fun applyHwpViewing() {
+        hwpMode=if(hwpColumns()==2)"spread"else if(hwpViewing.scrolling)"continuous"else"single"
+        browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(hwpMode)},$pageIndex,${hwpViewing.cover},${!hwpViewing.scrolling})",null)
+    }
+
+    private fun changeHwpMode(value: String) = changeHwpViewing(hwpViewing.copy(landscapePages=if(value=="spread")2 else 1))
+
+    private fun changeHwpViewing(value: PageViewing) {
+        if(pageCount<=0)return
+        hwpViewing=value
+        documentUri?.let {value.save(this,it)}
+        resetHwpZoom()
+        applyHwpViewing()
+    }
+
+    private fun resetHwpZoom() {
+        if(hwpZoom!=1f)browser?.zoomBy(1f/hwpZoom)
+        hwpZoom=1f
+        showHwpPosition()
     }
 
     private fun showHome() {
@@ -304,8 +321,8 @@ class MainActivity : Activity() {
             }
             addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
                 if ((right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) &&
-                    ready && pageCount > 0 && hwpMode == "single") {
-                    post { if (generation == browserGeneration && !isDestroyed) showPage(pageIndex) }
+                    ready && pageCount > 0) {
+                    post { if (generation == browserGeneration && !isDestroyed) {resetHwpZoom();applyHwpViewing()} }
                 }
             }
         }
@@ -345,7 +362,7 @@ class MainActivity : Activity() {
             MotionEvent.ACTION_UP -> {
                 val dx = event.rawX - swipeX
                 val dy = event.rawY - swipeY
-                if (swipeDocument && !swipeMultiTouch && hwpMode != "continuous" && hwpZoom <= 1.01f &&
+                if (swipeDocument && !swipeMultiTouch && !hwpViewing.scrolling && hwpZoom <= 1.01f &&
                     kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
                     kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
                     super.dispatchTouchEvent(event)
@@ -453,6 +470,7 @@ class MainActivity : Activity() {
         autoOpenOffice = false
         hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute {it.directory.deleteRecursively()}};hwpInkSnapshot=null
         hwpInkPreparing=false;hwpEncrypted=false;hwpInkError=null
+        documentUri?.let {hwpViewing=PageViewing.load(this,it)}
         val generation = ++loadGeneration
         val requestMimeType = incomingMimeType
         val source = DocumentSource(UUID.randomUUID().toString(), uri)
@@ -579,15 +597,9 @@ class MainActivity : Activity() {
     }
 
     private fun movePage(direction: Int) {
-        if (hwpModes.visibility == View.VISIBLE && hwpMode == "spread") {
-            val first = if (pageIndex == 0) 0 else 1 + (pageIndex - 1) / 2 * 2
-            val target = if (direction > 0) {
-                if (first == 0) 1 else first + 2
-            } else {
-                if (first <= 1) 0 else first - 2
-            }
-            showPage(target)
-        } else showPage(pageIndex + direction)
+        val columns=hwpColumns()
+        val row=hwpViewing.row(pageIndex,columns)+direction
+        if(row in 0 until hwpViewing.rows(pageCount,columns))showPage(hwpViewing.first(row,columns))
     }
 
     private fun beginHwpInk() {
@@ -631,6 +643,7 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             if(generation==loadGeneration&&!isDestroyed){
                                 val uri=Uri.parse("content://$packageName.pdfnotes/${note.id}")
+                                hwpViewing.save(this@MainActivity,uri)
                                 recent.remove(originalUri);recent.add(uri,name);recent.updateView(uri,selected,"1",1f)
                                 hwpInkPreparing=false
                                 startActivity(Intent(this,PdfActivity::class.java).setData(uri).putExtra("name",name).putExtra("restore_page",selected).putExtra("restore_mode",1).putExtra("start_ink",true),android.app.ActivityOptions.makeCustomAnimation(this,0,0).toBundle())
@@ -717,7 +730,7 @@ class MainActivity : Activity() {
             hwpModes.visibility = if (isHwp) View.VISIBLE else View.GONE
             list.adapter = HwpPageAdapter()
             val selected = pageIndex.coerceIn(0, count - 1)
-            if (isHwp) browser?.evaluateJavascript("window.setHwpMode(${JSONObject.quote(hwpMode)},$selected)", null)
+            if (isHwp) {pageIndex=selected;applyHwpViewing()}
             else showPage(selected)
             if (isHwp && pendingHwpZoomRestore) {
                 val zoomToRestore = hwpZoom

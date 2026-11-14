@@ -74,6 +74,15 @@ class PdfActivity : Activity() {
     private var pageCount = 0
     private var pageIndex = 0
     private var mode = 1
+    private var viewing = PageViewing()
+    private val wordSnapshot: File? by lazy {
+        intent.getStringExtra("word_snapshot")?.let {name->
+            require(name.matches(Regex("[0-9a-f-]{36}"))) {"Word 읽기 식별자가 올바르지 않습니다."}
+            File(cacheDir,"word-view/$name")
+        }
+    }
+    private var documentAreaWidth = 0
+    private var documentAreaHeight = 0
     private var restorePanel = false
     private var zoom = 1f
     private var pageOffsetX = 0f
@@ -93,6 +102,7 @@ class PdfActivity : Activity() {
     private var highlightedMatch = 0
     private var searchQuery = ""
     private var pendingTarget: Int? = null
+    private var scrollAnchorPage: Int? = null
     private var navigationGeneration = 0
     @Volatile private var renderGeneration = 0
     private var touchX = 0f
@@ -103,7 +113,7 @@ class PdfActivity : Activity() {
     private val tapDetector by lazy {
         android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
             override fun onSingleTapConfirmed(event:MotionEvent):Boolean {
-                if(closed||mode==0||zoom>1f||(inkEnabled&&fingerInk))return false
+                if(closed||viewing.scrolling||zoom>1f||(inkEnabled&&fingerInk))return false
                 val location=IntArray(2);horizontal.getLocationOnScreen(location)
                 val x=event.rawX-location[0]
                 val direction=ViewerControls.pageTapDirection(x,horizontal.width)
@@ -372,7 +382,9 @@ class PdfActivity : Activity() {
         inkStatus.text = "필기 문서를 준비하는 중"
         inkWorker.execute {
             try {
-                val note = (contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")).use {
+                val snapshot=wordSnapshot
+                val note = if(snapshot!=null)inkStore.createDocument(File(snapshot,"source.docx"),File(snapshot,"background.pdf"),intent.getStringExtra("name")?:"문서.docx",pageCount,File(snapshot,"profile.txt").readText()){closed}
+                else (contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")).use {
                     inkStore.create(it, intent.getStringExtra("name") ?: "문서.pdf", pageCount)
                 }
                 runOnUiThread {
@@ -380,6 +392,7 @@ class PdfActivity : Activity() {
                         inkPreparing = false
                         inkNote = note
                         val noteUri = Uri.parse("content://$packageName.pdfnotes/${note.id}")
+                        viewing.save(this@PdfActivity,noteUri)
                         recent.remove(uri)
                         intent.data = noteUri
                         lastSavedView = null
@@ -430,10 +443,11 @@ class PdfActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
-        mode = savedInstanceState?.getInt("mode") ?: intent.getIntExtra("restore_mode", 1)
+        viewing = PageViewing.load(this, requireNotNull(intent.data))
+        mode = viewing.columns(resources.configuration.screenWidthDp, resources.configuration.screenHeightDp)
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
         restoreOverview = savedInstanceState?.getBoolean("pageOverview") ?: false
-        zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
+        zoom = if(savedInstanceState!=null)1f else intent.getFloatExtra("restore_zoom", 1f)
         pageOffsetX = savedInstanceState?.getFloat("pageOffsetX") ?: 0f
         pageOffsetY = savedInstanceState?.getFloat("pageOffsetY") ?: 0f
         inkEnabled = savedInstanceState?.getBoolean("inkEnabled") ?: intent.getBooleanExtra("start_ink",false)
@@ -451,7 +465,7 @@ class PdfActivity : Activity() {
         val title=(intent.getStringExtra("name")?:"PDF").let {if(intent.data?.authority=="$packageName.pdfnotes")it.removePrefix("[필기] ")else it}
         controls = ViewerControls(this, title, { finish() }, { searchDocument() },
             { showThumbnails() },
-            listOf("한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "연속 보기" to { setMode(0) },
+            listOf("한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "페이지 넘김" to { changeViewing(viewing.copy(scrolling=false)) }, "세로 스크롤" to { changeViewing(viewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeViewing(viewing.copy(cover=!viewing.cover)) },
                 "필기 시작" to { beginInk() }, "손가락 필기" to {
                     inkStatus.visibility = View.VISIBLE
                     if (inkNote == null) { inkStatus.text = "먼저 필기 시작을 선택해 주세요." }
@@ -461,8 +475,8 @@ class PdfActivity : Activity() {
                 "읽기 모드" to { stopInk() },
                 "필기 포함 PDF 내보내기" to {openInkActions("export")}, "문서 백업" to {openInkActions("backup")},
                 "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }),
-            selectedViewMode={listOf("연속 보기","한쪽 보기","두쪽 보기")[mode]},
-            enabledMenuItem={name->when(name){"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->nextSearch.isEnabled;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={setZoom(1f)})
+            selectedMenuItem={name->when(name){"한쪽 보기"->mode==1;"두쪽 보기"->mode==2;"페이지 넘김"->!viewing.scrolling;"세로 스크롤"->viewing.scrolling;"첫 페이지를 표지로 보기"->viewing.cover;else->false}},
+            enabledMenuItem={name->when(name){"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->nextSearch.isEnabled;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)})
         status = controls.status
         controls.setListNavigation {if(thumbnailPanel==null&&pageOverview==null)showThumbnails()}
         controls.setLocationAction {controls.showPageJump(pageIndex,pageCount)}
@@ -482,7 +496,7 @@ class PdfActivity : Activity() {
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                if (mode == 1) {
+                if (mode == 1 && !viewing.scrolling) {
                     setPageZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), pinchFocusX, pinchFocusY, detector.focusX, detector.focusY)
                     pinchFocusX = detector.focusX
                     pinchFocusY = detector.focusY
@@ -499,7 +513,7 @@ class PdfActivity : Activity() {
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
-                if (mode == 1) {
+                if (mode == 1 && !viewing.scrolling) {
                     refreshSinglePage()
                     updateStatus()
                     return
@@ -512,9 +526,14 @@ class PdfActivity : Activity() {
             }
         }).apply { isQuickScaleEnabled = false }
         list = object : ListView(this) {
+            override fun performClick(): Boolean {super.performClick();return true}
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                if(!viewing.scrolling&&zoom<=1f){if(event.actionMasked==MotionEvent.ACTION_UP)performClick();return true}
+                return super.onTouchEvent(event)
+            }
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
                 val viewport = if (::horizontal.isInitialized && horizontal.width > 0) horizontal.width else resources.displayMetrics.widthPixels
-                val width = (viewport * if (mode == 1) 1f else zoom).toInt().coerceAtLeast(1)
+                val width = (viewport * if (mode == 1 && !viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
                 super.onMeasure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), heightMeasureSpec)
             }
         }.apply {
@@ -525,11 +544,12 @@ class PdfActivity : Activity() {
                     if (state == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
                         clearInkSelection()
                         pendingTarget = null
+                        scrollAnchorPage = null
                         navigationGeneration++
                     }
                 }
                 override fun onScroll(view: AbsListView?, first: Int, visible: Int, total: Int) {
-                    if (mode != 1 && total > 0 && visible > 0) {
+                    if (viewing.scrolling && scrollAnchorPage==null && total > 0 && visible > 0) {
                         val firstChild = view?.getChildAt(0)
                         val secondChild = view?.getChildAt(1)
                         fun visibleHeight(child: View?) = if (child == null || view == null) 0 else
@@ -573,6 +593,7 @@ class PdfActivity : Activity() {
             inkDock=LinearLayout(this@PdfActivity).apply {orientation=LinearLayout.VERTICAL;addView(inkPanel)}
             inkRetry=ui.button("필기 저장 다시 시도"){inkNote?.let{persistInk(it)}}.apply {visibility=View.GONE}
             inkDock.addView(inkRetry)
+            inkDock.addOnLayoutChangeListener {_,_,_,_,_,_,_,_,_->layoutDocumentArea()}
             inkStatus.addTextChangedListener(object:android.text.TextWatcher{
                 override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int)=Unit
                 override fun afterTextChanged(s:android.text.Editable?)=Unit
@@ -615,6 +636,7 @@ class PdfActivity : Activity() {
             })
         }
         inkDock.visibility=if(expanded||notice||inkChromeAnimating)View.VISIBLE else View.GONE
+        inkDock.post{if(!closed)layoutDocumentArea()}
         inkTools.visibility=if(expanded||inkChromeAnimating)View.VISIBLE else View.GONE
         val inline=inkAtTop()&&!failed
         inkPanel.orientation=if(inline)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
@@ -700,7 +722,7 @@ class PdfActivity : Activity() {
                 if (::horizontal.isInitialized) horizontal.getLocationOnScreen(location)
                 val inDocument = ::horizontal.isInitialized && touchX >= location[0] && touchX < location[0] + horizontal.width &&
                     touchY >= location[1] && touchY < location[1] + horizontal.height
-                if (inDocument && mode!=0 && !multiTouch && zoom <= 1f &&
+                if (inDocument && !viewing.scrolling && !(inkEnabled&&fingerInk) && !multiTouch && zoom <= 1f &&
                     kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
                     kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
                     super.dispatchTouchEvent(event)
@@ -709,7 +731,7 @@ class PdfActivity : Activity() {
                 }
             }
         }
-        if (touchInDocument && mode == 1 && zoom > 1f) {
+        if (touchInDocument && (mode == 1 && !viewing.scrolling) && zoom > 1f) {
             if (event.actionMasked == MotionEvent.ACTION_MOVE) {
                 pageOffsetX = panStartX + event.rawX - touchX
                 pageOffsetY = panStartY + event.rawY - touchY
@@ -950,7 +972,7 @@ class PdfActivity : Activity() {
                         oldTemporaryFilesCleaned = true
                     }
                 }
-                val cached = if (restoredNote == null) temporaryFile else null
+                val cached = if (restoredNote == null) wordSnapshot?.let{File(it,"background.pdf")}?:temporaryFile else null
                 val descriptor = if (cached != null) ParcelFileDescriptor.open(cached, ParcelFileDescriptor.MODE_READ_ONLY)
                     else contentResolver.openFileDescriptor(uri, "r") ?: throw IOException("파일을 읽을 수 없습니다.")
                 val opened = try {
@@ -994,6 +1016,7 @@ class PdfActivity : Activity() {
                         }
                         invalidateInk()
                         recent.add(uri, intent.getStringExtra("name") ?: "document.pdf")
+                        scrollAnchorPage=initialPage
                         list.adapter = PageAdapter()
                         list.setSelection(rowForPage(initialPage))
                         updateStatus()
@@ -1055,8 +1078,10 @@ class PdfActivity : Activity() {
         if (index !in 0 until pageCount) return
         clearInkSelection()
         navigationGeneration++
-        if (mode != 1) {
+        if (viewing.scrolling) {
             pendingTarget = index
+            scrollAnchorPage = index
+            pageIndex=index;updateStatus()
             list.setSelectionFromTop(rowForPage(index), 0)
         } else {
             if (pageIndex != index) { pageOffsetX = 0f; pageOffsetY = 0f }
@@ -1068,33 +1093,34 @@ class PdfActivity : Activity() {
     }
 
     private fun movePage(direction: Int) {
-        val index = if (mode != 2) pageIndex + direction else if (direction > 0) {
-            if (pageIndex == 0) 1 else pageIndex + 2
-        } else {
-            if (pageIndex <= 1) 0 else pageIndex - 2
-        }
-        showPage(index)
+        val row=viewing.row(pageIndex,mode)+direction
+        if(row in 0 until viewing.rows(pageCount,mode))showPage(viewing.first(row,mode))
     }
 
-    private fun rowForPage(index: Int) = when (mode) { 1 -> 0; 2 -> if (index == 0) 0 else (index + 1) / 2; else -> index }
-    private fun pageForRow(row: Int) = if (mode == 2 && row > 0) row * 2 - 1 else row
+    private fun rowForPage(index: Int) = if(viewing.scrolling)viewing.row(index,mode)else 0
+    private fun pageForRow(row: Int) = if(viewing.scrolling)viewing.first(row,mode)else viewing.first(viewing.row(pageIndex,mode),mode)
 
-    private fun setMode(value: Int) {
-        if (pageCount == 0 || mode == value) return
-        clearInkSelection()
-        pendingTarget = null
-        navigationGeneration++
-        val selected = pageIndex
-        mode = value
-        list.adapter = PageAdapter()
+    private fun setMode(value: Int) = changeViewing(viewing.copy(landscapePages=value))
+
+    private fun changeViewing(value: PageViewing) {
+        val selected=pageIndex
+        viewing=value
+        intent.data?.let {viewing.save(this,it)}
+        mode=viewing.columns(resources.configuration.screenWidthDp,resources.configuration.screenHeightDp)
+        clearInkSelection();pendingTarget=null;navigationGeneration++
+        zoom=1f;pageOffsetX=0f;pageOffsetY=0f
+        horizontal.scrollTo(0,0)
+        pageIndex=selected
+        scrollAnchorPage=selected
+        renderGeneration++
+        list.adapter=PageAdapter()
         list.setSelection(rowForPage(selected))
-        pageIndex = if (mode == 2) pageForRow(rowForPage(selected)) else selected
         updateStatus()
     }
 
     private fun updateStatus() {
         status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
-        val kind=if(intent.data?.authority=="$packageName.pdfnotes")when(intent.getStringExtra("name")?.substringAfterLast('.')?.lowercase()) {
+        val kind=if(intent.data?.authority=="$packageName.pdfnotes"||wordSnapshot!=null)when(intent.getStringExtra("name")?.substringAfterLast('.')?.lowercase()) {
             "pptx"->"PPT";"docx"->"Word";"hwp","hwpx"->"한글";else->"PDF"
         }else"PDF"
         status.contentDescription = "$kind ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
@@ -1187,17 +1213,40 @@ class PdfActivity : Activity() {
         }
     }
 
+    private fun layoutDocumentArea() {
+        if(!::horizontal.isInitialized||!::inkDock.isInitialized)return
+        val left=if(thumbnailPanel!=null&&UiStyle(this).useSidePanel())UiStyle(this).dp(200)else 0
+        val tools=if(inkDock.visibility==View.VISIBLE)inkDock.height else 0
+        val document=horizontal.layoutParams as android.widget.FrameLayout.LayoutParams
+        val top=if(inkAtTop())tools else 0
+        val bottom=if(inkAtTop())0 else tools
+        if(document.leftMargin==left&&document.topMargin==top&&document.bottomMargin==bottom)return
+        document.leftMargin=left;document.topMargin=top;document.bottomMargin=bottom
+        horizontal.layoutParams=document
+        val dock=inkDock.layoutParams as android.widget.FrameLayout.LayoutParams
+        dock.leftMargin=left;inkDock.layoutParams=dock
+    }
+
     private fun resizeDocument() {
-        val width = (horizontal.width * if (mode == 1) 1f else zoom).toInt().coerceAtLeast(1)
+        if(horizontal.width<=0||horizontal.height<=0)return
+        if(documentAreaWidth>0&&(documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height)){
+            zoom=1f;pageOffsetX=0f;pageOffsetY=0f
+        }
+        val changed=documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height
+        documentAreaWidth=horizontal.width;documentAreaHeight=horizontal.height
+        if(changed){renderGeneration++;(list.adapter as? BaseAdapter)?.notifyDataSetChanged();list.setSelection(rowForPage(pageIndex))}
+
+        val width = (horizontal.width * if (mode == 1 && !viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
         if (list.layoutParams.width != width) {
             renderGeneration++
             list.layoutParams = android.widget.FrameLayout.LayoutParams(width, -1)
             (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
         }
+        if(changed&&openedSuccessfully)updateStatus()
     }
 
     private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null, targetX: Float? = focusX, targetY: Float? = focusY) {
-        if (mode == 1) {
+        if (mode == 1 && !viewing.scrolling) {
             val image = currentPageImage() ?: return
             val location = IntArray(2)
             image.getLocationInWindow(location)
@@ -1229,6 +1278,16 @@ class PdfActivity : Activity() {
     }
 
     private fun currentPageImage(): ImageView? = (list.getChildAt(0) as? LinearLayout)?.getChildAt(0) as? ImageView
+
+    private fun applySpreadMatrix(image: ImageView, left: Boolean) {
+        val drawable=image.drawable?:return
+        if(image.width==0||image.height==0)return
+        val scale=minOf(image.width.toFloat()/drawable.intrinsicWidth,image.height.toFloat()/drawable.intrinsicHeight)
+        image.imageMatrix=android.graphics.Matrix().apply {
+            setScale(scale,scale)
+            postTranslate(if(left)image.width-drawable.intrinsicWidth*scale else 0f,(image.height-drawable.intrinsicHeight*scale)/2f)
+        }
+    }
 
     private fun applyPageMatrix(image: ImageView) {
         val drawable = image.drawable ?: return
@@ -1265,7 +1324,7 @@ class PdfActivity : Activity() {
         if (image.tag == key) return
         image.tag = key
         fun display(bitmap: Bitmap) {
-            if (!closed && mode == 1 && pageIndex == index && currentPageImage() === image && image.tag == key) {
+            if (!closed && (mode == 1 && !viewing.scrolling) && pageIndex == index && currentPageImage() === image && image.tag == key) {
                 image.setImageBitmap(bitmap)
                 applyPageMatrix(image)
             }
@@ -1396,32 +1455,40 @@ class PdfActivity : Activity() {
         thumbnailAnimator=android.animation.ValueAnimator.ofInt(panel.layoutParams.width,target).apply {
             duration=280;interpolator=android.view.animation.DecelerateInterpolator()
             addUpdateListener {panel.layoutParams=panel.layoutParams.apply {width=it.animatedValue as Int}}
-            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){finished()}})
+            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){finished();layoutDocumentArea()}})
             start()
         }
     }
 
     private inner class PageAdapter : BaseAdapter() {
-        override fun getCount() = when (mode) { 1 -> 1; 2 -> 1 + pageCount / 2; else -> pageCount }
-        override fun getItem(position: Int) = if (mode == 1) pageIndex else pageForRow(position)
+        override fun getCount() = if(viewing.scrolling)viewing.rows(pageCount,mode)else 1
+        override fun getItem(position: Int) = pageForRow(position)
         override fun getItemId(position: Int) = getItem(position).toLong()
         override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
             val page = getItem(position)
             val row = (recycled as? LinearLayout ?: LinearLayout(this@PdfActivity)).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                minimumHeight = if (mode != 0) list.height else 0
+                minimumHeight = 0
+                layoutParams=AbsListView.LayoutParams(-1, (horizontal.height*if(mode==1&&!viewing.scrolling)1f else zoom).toInt().coerceAtLeast(1))
+                gravity = android.view.Gravity.CENTER
                 removeAllViews()
             }
-            val count = if (mode == 2 && position > 0 && page + 1 < pageCount) 2 else 1
+            val singleCover=mode==2&&viewing.cover&&page==0
+            val columns=if(singleCover)1 else mode
+            val count=minOf(columns,pageCount-page)
+            val gap=if(columns==2)UiStyle(this@PdfActivity).dp(6)else 0
             repeat(count) { offset ->
                 val index = page + offset
-                val width = (parent.width / count).coerceAtLeast(1)
-                val renderWidth = (((((width * if (mode == 1) zoom else 1f).toInt()) + 127) / 128) * 128).coerceAtMost(2560)
+                val width = ((parent.width-gap) / columns).coerceAtLeast(1)
+                val renderWidth = (((((width * if (mode == 1 && !viewing.scrolling) zoom else 1f).toInt()) + 127) / 128) * 128).coerceAtMost(2560)
                 val key = "$index:$renderWidth"
                 val generation = renderGeneration
                 val image = object : ImageView(this@PdfActivity) {
                     private val inkLayer = InkLayer()
+                    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
+                        super.onSizeChanged(w,h,oldw,oldh)
+                        if(columns==2)applySpreadMatrix(this,offset==0)
+                    }
                     override fun onDraw(canvas: Canvas) {
                         super.onDraw(canvas)
                         drawInk(canvas, this, index, inkLayer)
@@ -1438,17 +1505,18 @@ class PdfActivity : Activity() {
                 }.apply {
                     contentDescription = "PDF ${index + 1}쪽"
                     setTag(R.id.pdf_page_index, index)
-                    scaleType = if (mode == 1) ImageView.ScaleType.MATRIX else ImageView.ScaleType.FIT_CENTER
+                    scaleType = if (columns==2||mode == 1 && !viewing.scrolling) ImageView.ScaleType.MATRIX else ImageView.ScaleType.FIT_CENTER
                     tag = key
-                    layoutParams = LinearLayout.LayoutParams(0, (width * 1.4f).toInt().coerceAtLeast(1), 1f)
+                    layoutParams = LinearLayout.LayoutParams(width, row.layoutParams.height)
                 }
+                if(offset>0)row.addView(View(this@PdfActivity),LinearLayout.LayoutParams(gap,1))
                 row.addView(image)
                 fun display(bitmap: Bitmap) {
-                    val imageHeight = (width.toLong() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
-                    val height = if (mode == 1 && list.height > 0) list.height else imageHeight
-                    image.layoutParams = LinearLayout.LayoutParams(0, height, 1f)
+                    val height = row.layoutParams.height
+                    image.layoutParams = LinearLayout.LayoutParams(width, height)
                     image.setImageBitmap(bitmap)
-                    if (mode == 1) image.post { if (image.parent === row) applyPageMatrix(image) }
+                    if(columns==2)image.post {if(image.parent===row)applySpreadMatrix(image,offset==0)}
+                    if (mode == 1 && !viewing.scrolling) image.post { if (image.parent === row) applyPageMatrix(image) }
                     if (pendingTarget == index) {
                         val generation = navigationGeneration
                         pendingTarget = null
@@ -1471,6 +1539,10 @@ class PdfActivity : Activity() {
                         }
                     }
                 }
+            }
+            if(count<columns){
+                row.addView(View(this@PdfActivity),LinearLayout.LayoutParams(gap,1))
+                row.addView(View(this@PdfActivity),LinearLayout.LayoutParams((parent.width-gap)/columns,1))
             }
             return row
         }
@@ -1513,6 +1585,7 @@ class PdfActivity : Activity() {
         worker.shutdown()
         cache.evictAll()
         thumbnails.evictAll()
+        if(!isChangingConfigurations)wordSnapshot?.let {directory->PdfInkStore.io.execute {directory.deleteRecursively()}}
         super.onDestroy()
     }
 }

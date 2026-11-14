@@ -18,7 +18,7 @@ function setup({ failPageCount = false, pendingFetch = false, pendingBody = fals
     let freeCount = 0;
     let markPendingStarted;
     const pendingStarted = new Promise(resolve => { markPendingStarted = resolve; });
-    const window = { Android: {
+    const window = { addEventListener() {}, Android: {
         onReady() {},
         onOpened: (...args) => events.push(['opened', ...args]),
         onError: (...args) => events.push(['error', ...args]),

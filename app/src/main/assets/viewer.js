@@ -14,6 +14,9 @@ let sequence = 0;
 let activeGeneration = 0;
 let pendingFetch;
 let hwpMode = 'single';
+let hwpPaged = true;
+let hwpTrackScroll = false;
+window.addEventListener('pointerdown', () => { hwpTrackScroll = true; }, {passive:true});
 let hwpCurrentPage = 0;
 let hwpObserver;
 let hwpActiveObserver;
@@ -138,7 +141,9 @@ function hwpFrame(index) {
     return frame;
 }
 
-window.setHwpMode = (mode, index) => {
+window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
+    hwpPaged = paged;
+    hwpTrackScroll = false;
     if (!documentHandle || !['continuous', 'single', 'spread'].includes(mode)) return;
     const layoutGeneration = ++hwpLayoutGeneration;
     hwpObserver?.disconnect();
@@ -158,21 +163,32 @@ window.setHwpMode = (mode, index) => {
         page.replaceChildren();
         page.style.display = mode === 'spread' ? 'grid' : 'block';
         page.style.gridTemplateColumns = mode === 'spread' ? 'repeat(2,minmax(0,1fr))' : '';
-        page.style.gap = '8px';
+        page.style.gap = mode === 'spread' ? '8px 6px' : '8px';
+        page.style.justifyItems = 'center';
         page.style.background = 'transparent';
+        page.style.gridAutoRows = `${Math.max(1,window.innerHeight - 24)}px`;
         const slots = views.map((_, pageIndex) => {
             const info = JSON.parse(documentHandle.getPageInfo(pageIndex));
             if (!(info.width > 0 && info.height > 0)) throw new Error('페이지 크기를 확인할 수 없습니다.');
             const slot = document.createElement('div');
-            slot.style.aspectRatio = `${info.width} / ${info.height}`;
+            const columns = mode === 'spread' ? 2 : 1;
+            const isCover = columns === 2 && cover && pageIndex === 0;
+            const columnWidth = (page.clientWidth - (columns - 1) * 6) / (isCover ? 1 : columns);
+            const height = Math.max(1, window.innerHeight - 24);
+            const width = Math.min(columnWidth, height * info.width / info.height);
+            slot.style.width = `${width}px`;
+            slot.style.height = `${width * info.height / info.width}px`;
+            slot.style.alignSelf = 'center';
             slot.style.background = 'white';
             slot.style.position = 'relative';
-            if (mode === 'continuous') slot.style.marginBottom = '8px';
+            if (mode === 'continuous') slot.style.margin = '0 auto 8px';
             if (mode === 'spread') {
-                slot.style.gridColumn = pageIndex === 0 ? '2' : String((pageIndex - 1) % 2 + 1);
-                slot.style.gridRow = pageIndex === 0 ? '1' : String(Math.floor((pageIndex - 1) / 2) + 2);
+                slot.style.justifySelf = isCover ? 'center' : ((pageIndex - (cover ? 1 : 0)) % 2 === 0 ? 'end' : 'start');
+                slot.style.gridColumn = isCover ? '1 / -1' : String((pageIndex - (cover ? 1 : 0)) % 2 + 1);
+                slot.style.gridRow = String((cover ? Math.floor((pageIndex + 1) / 2) : Math.floor(pageIndex / 2)) + 1);
             }
             slot.dataset.page = String(pageIndex);
+            slot.dataset.row = String(mode === 'spread' ? (cover ? Math.floor((pageIndex + 1) / 2) : Math.floor(pageIndex / 2)) : pageIndex);
             page.appendChild(slot);
             return slot;
         });
@@ -209,7 +225,7 @@ window.setHwpMode = (mode, index) => {
                 const shown = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
                 if (shown > visible) { active = Number(slot.dataset.page); visible = shown; }
             }
-            if (active >= 0) window.Android.onPageShown(active, generation);
+            if (active >= 0 && !hwpPaged && hwpTrackScroll) window.Android.onPageShown(active, generation);
         }, {threshold: [0, 0.25, 0.5, 0.75, 1]});
         slots.forEach(slot => { hwpObserver.observe(slot); hwpActiveObserver.observe(slot); });
         status.textContent = '';
@@ -361,7 +377,14 @@ window.showPage = index => {
     hwpCurrentPage = index;
     try {
         if (hwpMode !== 'single') {
-            page.children[index]?.scrollIntoView({block: 'start'});
+            if (hwpPaged) {
+                const row = page.children[index]?.dataset.row;
+                for (const slot of page.children) {
+                    slot.style.display = slot.dataset.row === row ? '' : 'none';
+                    slot.style.gridRow = '1';
+                }
+                window.scrollTo(0,0);
+            } else page.children[index]?.scrollIntoView({block: 'start'});
             window.Android.onPageShown(index, activeGeneration);
             return;
         }
