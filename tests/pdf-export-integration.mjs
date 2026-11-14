@@ -22,7 +22,7 @@ run('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE
 if(/documentsui/.test(xml()))run('shell','input','keyevent','BACK');
 await openFile(source);
 await wait(/PDF 1쪽/);await delay(800);
-let x=await wait(/PDF 1 \/ 5/);tap(x,'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/필기 준비 완료/);
+let x=await wait(/PDF 1 \/ 5/);tap(x,'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
 // 입력 위치는 창 크기에 맞추되 필기 화면 중앙의 원본 페이지 내부로 제한
 const pageNode=xml().match(/<node[^>]*content-desc="PDF 1쪽"[^>]*>/)?.[0];
 const size=pageNode?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(size);

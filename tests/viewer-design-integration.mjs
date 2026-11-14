@@ -30,12 +30,11 @@ if(process.argv.includes('--pdf')){
  x=await wait(/PDF 1쪽/);await delay(500);
  const titleBounds=x.match(/<node[^>]*text="MIN-ui-design.pdf"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);assert.ok(titleBounds);
  tap(x,'목록');
- x=await wait(/전체 페이지/);if(/text="전체 페이지 보기"/.test(x)){tap(x,'전체 페이지 보기');x=await wait(/필기한 페이지/);}
- assert.match(x,/필기한 페이지/);
+ x=await wait(/content-desc="페이지 목록"/);assert.doesNotMatch(x,/text="필기한 페이지"/);
  const overviewTitle=x.match(/<node[^>]*text="MIN-ui-design.pdf"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);assert.ok(overviewTitle);
  assert.ok(overviewTitle[1]>=titleBounds[1]-4,'페이지 목록 제목이 시스템 상태 표시줄 아래에 배치되어야 함');
  capture('pages');tap(x,'미리보기 2쪽');await wait(/PDF 2 \/ 3/);
- tap(screen(),'더보기');tap(await wait(/필기 시작/),'필기 시작');x=await wait(/필기 준비 완료/);
+ tap(screen(),'더보기');tap(await wait(/필기 시작/),'필기 시작');x=await wait(/content-desc="읽기 모드로 전환"/);
  tap(x,'펜');x=await wait(/펜 설정/);assert.match(x,/획 미리보기/);tap(x,'파랑');tap(await wait(/파랑, 선택됨/),'굵게');x=await wait(/굵게, 선택됨/);capture('pen-settings');tap(x,'펜 설정 닫기');
  console.log(`${serial}: 페이지 개요 선택·펜 설정 미리보기·굵기 선택 통과`);
  x=await wait(/PDF 2쪽/);
@@ -49,9 +48,9 @@ if(process.argv.includes('--pdf')){
  const ink=blue('ink');assert.ok(ink>30);
  tap(screen(),'실행 취소');await wait(/필기 저장 완료/);capture('undo');assert.ok(blue('undo')<ink*.1);
  x=screen();if(!/text="다시 실행"/.test(x)){tap(x,'필기 도구 메뉴');x=await wait(/다시 실행/);}tap(x,'다시 실행');await wait(/필기 저장 완료/);capture('redo');assert.ok(blue('redo')>ink*.8);
- tap(screen(),'더보기');tap(await wait(/전체 페이지 보기/),'전체 페이지 보기');tap(await wait(/필기한 페이지/),'필기한 페이지');
- x=await wait(/미리보기 2쪽/);assert.doesNotMatch(x,/미리보기 [13]쪽/);capture('ink-pages');tap(x,'미리보기 2쪽');await wait(/PDF 2쪽/);
+ tap(screen(),'목록');
+ x=await wait(/미리보기 2쪽/);assert.match(x,/미리보기 1쪽/);assert.doesNotMatch(x,/text="필기한 페이지"/);capture('ink-pages');tap(x,'미리보기 2쪽');await wait(/PDF 2쪽/);
  run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
  x=await wait(/MIN-ui-design.pdf/);tap(x,'MIN-ui-design.pdf');await wait(/필기 복원 완료/);capture('reopened');assert.ok(blue('reopened')>30);
- console.log(`${serial}: 파란 펜 입력·저장·취소/다시 실행·필기 페이지 필터·강제 종료 후 복원 통과`);
+ console.log(`${serial}: 파란 펜 입력·저장·취소/다시 실행·전체 페이지 목록·강제 종료 후 복원 통과`);
 }

@@ -28,7 +28,6 @@ import android.widget.BaseAdapter
 import android.widget.GridView
 import android.widget.FrameLayout
 import android.widget.ArrayAdapter
-import android.widget.ListPopupWindow
 import org.libreoffice.kit.Document
 import org.libreoffice.kit.LibreOfficeKit
 import org.libreoffice.kit.Office
@@ -57,7 +56,7 @@ class OfficeActivity : Activity() {
     private lateinit var documentArea: FrameLayout
     private lateinit var sheetLeftHint: TextView
     private lateinit var sheetRightHint: TextView
-    private lateinit var contentRow: LinearLayout
+    private lateinit var contentRow: FrameLayout
     private var closeSlidePanel: (() -> Unit)? = null
     private var slidePanelGrid: GridView? = null
     private var slidePanelSelection: Int? = null
@@ -132,6 +131,9 @@ class OfficeActivity : Activity() {
     private var highlightPage = -1
     private var highlight: IntArray? = null
     private var pages = emptyList<IntArray>()
+    private var navigationDialog: AlertDialog? = null
+    private var slidePanelView: View? = null
+    private var touchOnOverlay = false
     private var previewRecorded = false
     private var sheetNames = emptyList<String>()
     private var tilePixels: ByteBuffer? = null
@@ -139,6 +141,8 @@ class OfficeActivity : Activity() {
     private var passwordLatch: CountDownLatch? = null
     private var passwordAttempts = 0
     private var openedSuccessfully = false
+    private var inkPreparing = false
+    private var inkPreparationError: String? = null
     private lateinit var controls: ViewerControls
     private var recentRegistered = false
     private var lastSavedView: ViewPosition? = null
@@ -162,11 +166,17 @@ class OfficeActivity : Activity() {
                     else -> showSlideList()
                 }
             },
-            { showPage(pageIndex - 1) }, { showPage(pageIndex + 1) },
-            { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) }, listOf("다음 검색 결과" to { searchNext() }),
-            enabledMenuItem={name->when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;"이전 페이지"->pageIndex>0;"다음 페이지"->pageIndex<pageCount-1;else->openedSuccessfully}},onFit={setZoom(1f)})
+            listOf("다음 검색 결과" to { searchNext() }),
+            enabledMenuItem={name->!inkPreparing&&when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;else->openedSuccessfully}},onFit={setZoom(1f)})
         status = controls.status
-        controls.setLocationAction {if(documentType==Document.DOCTYPE_SPREADSHEET)showSheetList()else controls.showPageJump(pageIndex,pageCount){showPage(it)}}
+        controls.setListNavigation {
+            if(navigationDialog==null)when(documentType) {
+                Document.DOCTYPE_TEXT->showWordPageList()
+                Document.DOCTYPE_SPREADSHEET->showSheetList()
+                else->if(closeSlidePanel==null)showSlideList()
+            }
+        }
+        controls.setLocationAction {if(documentType==Document.DOCTYPE_SPREADSHEET)showSheetList()else controls.showPageJump(pageIndex,pageCount)}
         slideList = controls.listButton.apply { visibility = View.GONE }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
@@ -309,9 +319,8 @@ class OfficeActivity : Activity() {
             sheetLeftHint = sheetHint("‹", "왼쪽에 시트 영역 있음", Gravity.START)
             sheetRightHint = sheetHint("›", "오른쪽에 시트 영역 있음", Gravity.END)
         }
-        contentRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(documentArea, LinearLayout.LayoutParams(0, -1, 1f))
+        contentRow = FrameLayout(this).apply {
+            addView(documentArea, FrameLayout.LayoutParams(-1,-1))
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -402,6 +411,7 @@ class OfficeActivity : Activity() {
                 runOnUiThread {
                     if (!closed) {
                         openedSuccessfully = true
+                        if(documentType==Document.DOCTYPE_PRESENTATION)controls.setReadingAction(false,true){beginPresentationInk()}
                         setResult(RESULT_OK, Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                     }
                 }
@@ -437,6 +447,12 @@ class OfficeActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(inkPreparing)return super.dispatchTouchEvent(event)
+        if(event.actionMasked==MotionEvent.ACTION_DOWN) {
+            val bounds=android.graphics.Rect()
+            touchOnOverlay=slidePanelView?.let {it.getGlobalVisibleRect(bounds)&&bounds.contains(event.rawX.toInt(),event.rawY.toInt())}?:false
+        }
+        if(touchOnOverlay)return super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val location = IntArray(2)
             if (::viewport.isInitialized) viewport.getLocationOnScreen(location)
@@ -471,6 +487,59 @@ class OfficeActivity : Activity() {
         val configured = original.replaceFirst(marker, "$marker\n<dir>$userDirectory</dir>\n$aliases")
         val fontConfig = File(applicationInfo.dataDir, "etc/fonts/fonts.conf")
         if (!fontConfig.isFile || fontConfig.readText(Charsets.UTF_8) != configured) fontConfig.writeText(configured, Charsets.UTF_8)
+    }
+
+    private fun beginPresentationInk() {
+        if(!openedSuccessfully||closed||inkPreparing||documentType!=Document.DOCTYPE_PRESENTATION)return
+        if(passwordAttempts>0){inkPreparationError=getString(R.string.ppt_ink_password_unsupported);updateStatus();return}
+        inkPreparationError=null
+        inkPreparing=true
+        controls.setReadingAction(false,false){beginPresentationInk()}
+        status.text=getString(R.string.ppt_ink_preparing)
+        val selected=pageIndex
+        worker.execute {
+            var staged: File? = null
+            try {
+                val snapshot=File.createTempFile("lok-annotation-",".pdf",cacheDir)
+                staged=snapshot
+                activeFiles.add(snapshot)
+                val opened=document?:throw IOException("열린 PPT가 없습니다.")
+                val source=temporaryFile?:throw IOException("PPT 원본 사본이 없습니다.")
+                val sizes=(0 until pageCount).map { part ->
+                    if(closed)throw java.io.InterruptedIOException("작업을 취소했습니다.")
+                    opened.setPart(part);opened.documentWidth.toDouble()/opened.documentHeight
+                }
+                opened.setPart(selected)
+                val options="""{"ExportHiddenSlides":{"type":"boolean","value":"true"},"ExportNotesPages":{"type":"boolean","value":"false"},"ExportOnlyNotesPages":{"type":"boolean","value":"false"},"ReduceImageResolution":{"type":"boolean","value":"false"},"UseLosslessCompression":{"type":"boolean","value":"true"}}"""
+                if(opened.saveAs(android.net.Uri.fromFile(snapshot).toString(),"pdf",options)==0)throw IOException("PPT 필기 배경을 PDF로 만들 수 없습니다.")
+                android.os.ParcelFileDescriptor.open(snapshot,android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                    android.graphics.pdf.PdfRenderer(descriptor).use { pdf ->
+                        require(pdf.pageCount==pageCount){"PPT 슬라이드 수와 PDF 배경이 다릅니다."}
+                        sizes.forEachIndexed { index,ratio -> pdf.openPage(index).use {
+                            require(kotlin.math.abs(it.width.toDouble()/it.height-ratio)<0.02){"PPT 슬라이드 비율이 달라 필기를 시작할 수 없습니다."}
+                        } }
+                    }
+                }
+                val build=assets.open("program/versionrc").bufferedReader().useLines { lines ->
+                    lines.map(String::trim).firstOrNull{it.startsWith("buildid=")}?.substringAfter('=')
+                }?:throw IOException("문서 엔진의 빌드 정보를 읽을 수 없습니다.")
+                val name=intent.getStringExtra("name")?:"문서.pptx"
+                val note=PdfInkStore(File(filesDir,"pdf-notes")).createPresentation(source,snapshot,name,pageCount,"LibreOfficeKit/$build",{closed})
+                val uri=android.net.Uri.parse("content://$packageName.pdfnotes/${note.id}")
+                runOnUiThread {
+                    if(!closed){
+                        setResult(RESULT_OK,Intent().setData(uri).putExtra("name",name).putExtra("view_page",selected).putExtra("view_mode","1").putExtra("view_zoom",1f))
+                        startActivity(Intent(this,PdfActivity::class.java).setData(uri).putExtra("name",name)
+                            .putExtra("restore_page",selected).putExtra("restore_mode",1).putExtra("start_ink",true),
+                            android.app.ActivityOptions.makeCustomAnimation(this,0,0).toBundle())
+                        finish()
+                        @Suppress("DEPRECATION")
+                        overridePendingTransition(0,0)
+                    }
+                }
+            } catch(error:Exception){runOnUiThread{if(!closed){inkPreparing=false;inkPreparationError=getString(R.string.ppt_ink_prepare_failed,error.message);updateStatus();controls.setReadingAction(false,true){beginPresentationInk()}}}}
+            finally{staged?.let{it.delete();activeFiles.remove(it)}}
+        }
     }
 
     private fun requestPassword(office: Office, url: String) {
@@ -733,7 +802,7 @@ class OfficeActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(pageIndex)?:"시트"} · ${pageIndex+1}/$pageCount · ${(zoom*100).toInt()}%"else"${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
+        status.text = if(inkPreparing)getString(R.string.ppt_ink_preparing)else inkPreparationError ?: if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(pageIndex)?:"시트"} · ${pageIndex+1}/$pageCount · ${(zoom*100).toInt()}%"else"${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
         status.contentDescription = "LibreOffice ${pageIndex + 1} / $pageCount$pageLimit · ${(zoom * 100).toInt()}%$searchMessage"
         val uri = intent.data ?: return
         if (!openedSuccessfully) return
@@ -852,21 +921,27 @@ class OfficeActivity : Activity() {
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
             this.adapter = adapter
         }
+        val panel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;setBackgroundColor(ui.background)}
+        var closeNavigation:()->Unit={}
+        controls.attachListNavigation(panel,pageIndex,pageCount){index->
+            selected=index
+            if(wide){showPage(index);grid.invalidateViews()}else closeNavigation()
+        }
+        panel.addView(grid,LinearLayout.LayoutParams(-1,if(wide)0 else ui.dp((resources.configuration.screenHeightDp-240).coerceIn(120,280)),if(wide)1f else 0f))
         val closeList = {
-            val target = if (grid.parent === contentRow) slidePanelSelection ?: pageIndex else selected
+            val target = if (panel.parent === contentRow) slidePanelSelection ?: pageIndex else selected
             active.set(false)
             val finishClose = {
                 cache.evictAll()
-                if (grid.parent === contentRow) contentRow.removeView(grid)
+                if (panel.parent === contentRow) contentRow.removeView(panel)
                 slidePanelGrid = null
+                slidePanelView = null
                 closeSlidePanel = null
                 slidePanelSelection = null
-                if (!closed) {
-                    if (target == pageIndex) showPage(target, viewportX, viewportY) else showPage(target)
-                }
+                if (!closed&&target!=pageIndex)showPage(target)
             }
-            if (!closed && grid.parent === contentRow) {
-                animateSlidePanel(grid, grid.width, 0, finishClose)
+            if (!closed && panel.parent === contentRow) {
+                animateSlidePanel(panel, grid.width, 0, finishClose)
             } else {
                 finishClose()
             }
@@ -874,22 +949,24 @@ class OfficeActivity : Activity() {
         if (wide) {
             closeSlidePanel = closeList
             slidePanelGrid = grid
+            slidePanelView = panel
             slidePanelSelection = pageIndex
             val width = (240 * resources.displayMetrics.density).toInt()
-            contentRow.addView(grid, 0, LinearLayout.LayoutParams(0, -1))
+            contentRow.addView(panel, FrameLayout.LayoutParams(0,-1,Gravity.START))
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; showPage(position); grid.invalidateViews() }
-            animateSlidePanel(grid, 0, width) {
-                if (!closed && active.get()) showPage(pageIndex, viewportX, viewportY)
-            }
+            animateSlidePanel(panel, 0, width) {}
         } else {
-            val dialog = AlertDialog.Builder(this).setTitle("슬라이드 목록").setView(grid).setNegativeButton("닫기", null).create()
+            val dialog = AlertDialog.Builder(this).setTitle("슬라이드 목록").setView(panel).setNegativeButton("닫기", null).create()
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; dialog.dismiss() }
-            dialog.setOnDismissListener { closeList() }
+            closeNavigation={dialog.dismiss()}
+            dialog.setOnDismissListener { navigationDialog=null;closeList() }
+            navigationDialog=dialog
+            dialog.window?.setWindowAnimations(R.style.PageListMotion)
             dialog.show()
         }
     }
 
-    private fun animateSlidePanel(grid: GridView, from: Int, to: Int, finished: () -> Unit) {
+    private fun animateSlidePanel(grid: View, from: Int, to: Int, finished: () -> Unit) {
         slidePanelAnimating = true
         slidePanelAnimator = ValueAnimator.ofInt(from, to).apply {
             duration = 220
@@ -908,25 +985,20 @@ class OfficeActivity : Activity() {
     }
 
     private fun showSheetList() {
-        if (sheetNames.isEmpty()) return
-        val popup = ListPopupWindow(this).apply {
-            anchorView = slideList
-            isModal = true
-            setAdapter(ArrayAdapter(this@OfficeActivity, android.R.layout.simple_list_item_single_choice, sheetNames))
-            width = minOf((240 * resources.displayMetrics.density).toInt(), resources.displayMetrics.widthPixels)
-            height = minOf(((sheetNames.size * 48 + 16) * resources.displayMetrics.density).toInt(), (320 * resources.displayMetrics.density).toInt())
-            setOnItemClickListener { _, _, position, _ ->
-                dismiss()
-                if (position != pageIndex) showPage(position)
-            }
-        }
-        popup.show()
-        popup.listView?.choiceMode = android.widget.ListView.CHOICE_MODE_SINGLE
-        popup.listView?.setItemChecked(pageIndex, true)
+        if(sheetNames.isEmpty()||navigationDialog!=null)return
+        val root=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL}
+        val dialog=AlertDialog.Builder(this).setTitle("시트 목록").setView(root).setNegativeButton("닫기",null).create()
+        controls.attachListNavigation(root,pageIndex,pageCount){index->dialog.dismiss();showPage(index)}
+        root.addView(android.widget.ListView(this).apply {
+            adapter=ArrayAdapter(this@OfficeActivity,android.R.layout.simple_list_item_single_choice,sheetNames)
+            setOnItemClickListener {_,_,position,_->dialog.dismiss();showPage(position)}
+        },LinearLayout.LayoutParams(-1,(240*resources.displayMetrics.density).toInt()))
+        dialog.setOnDismissListener {navigationDialog=null}
+        navigationDialog=dialog;dialog.window?.setWindowAnimations(R.style.PageListMotion);dialog.show()
     }
 
     private fun showWordPageList() {
-        if (pages.isEmpty()) return
+        if (pages.isEmpty()||navigationDialog!=null) return
         val adapter = object : BaseAdapter() {
             override fun getCount() = pageCount
             override fun getItem(position: Int) = position
@@ -938,13 +1010,15 @@ class OfficeActivity : Activity() {
                 return item
             }
         }
-        AlertDialog.Builder(this).setTitle("페이지 목록")
-            .setSingleChoiceItems(adapter, pageIndex) { dialog, position ->
-                dialog.dismiss()
-                if (position != pageIndex) showPage(position)
-            }
-            .setNegativeButton("닫기", null)
-            .show()
+        val root=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL}
+        val dialog=AlertDialog.Builder(this).setTitle("페이지 목록").setView(root).setNegativeButton("닫기",null).create()
+        controls.attachListNavigation(root,pageIndex,pageCount){index->dialog.dismiss();showPage(index)}
+        root.addView(android.widget.ListView(this).apply {
+            this.adapter=adapter
+            setOnItemClickListener {_,_,position,_->dialog.dismiss();showPage(position)}
+        },LinearLayout.LayoutParams(-1,(300*resources.displayMetrics.density).toInt()))
+        dialog.setOnDismissListener {navigationDialog=null}
+        navigationDialog=dialog;dialog.window?.setWindowAnimations(R.style.PageListMotion);dialog.show()
     }
 
     private fun searchDocument() {

@@ -1,0 +1,6 @@
+<resources>
+    <style name="PageListMotion">
+        <item name="android:windowEnterAnimation">@anim/page_list_enter</item>
+        <item name="android:windowExitAnimation">@anim/page_list_exit</item>
+    </style>
+</resources>

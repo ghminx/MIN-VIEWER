@@ -68,9 +68,8 @@ class CsvActivity : Activity() {
         encoding = savedInstanceState?.getString("encoding") ?: intent.getStringExtra("restore_encoding")
             ?.takeIf { it == "UTF-8" || it == "CP949" }
         controls = ViewerControls(this, intent.getStringExtra("name") ?: "CSV 문서", { finish() }, null,
-            { showRowJump() }, { if(page>0)loadPage(page-1) }, {loadPage(page+1)},
-            {zoomFromButton(1/1.5f)}, {zoomFromButton(1.5f)},
-            listOf("행으로 이동" to {showRowJump()}, "문자 인코딩" to {showEncoding()}), enabledMenuItem={name->!loading&&when(name){"이전 페이지"->page>0;"다음 페이지"->canLoadNext;else->true}},onFit={zoomFromButton(1f/zoom)})
+            { showRowJump() },
+            listOf("행으로 이동" to {showRowJump()}, "문자 인코딩" to {showEncoding()}), enabledMenuItem={!loading},onFit={zoomFromButton(1f/zoom)})
         controls.listButton.contentDescription="행으로 이동"
         controls.setLocationAction("행으로 이동"){showRowJump()}
         status=controls.status

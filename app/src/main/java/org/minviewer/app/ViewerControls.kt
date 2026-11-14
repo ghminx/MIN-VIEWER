@@ -22,12 +22,8 @@ class ViewerControls(
     private val activity: Activity,
     title: String,
     onBack: () -> Unit,
-    onSearch: (() -> Unit)?,
+    private val onSearch: (() -> Unit)?,
     onList: () -> Unit,
-    private val onPrevious: () -> Unit,
-    private val onNext: () -> Unit,
-    private val onZoomOut: () -> Unit,
-    private val onZoomIn: () -> Unit,
     private val menuItems: List<Pair<String, () -> Unit>>,
     private val selectedViewMode: () -> String? = { null },
     private val enabledMenuItem: (String) -> Boolean = { true },
@@ -45,8 +41,6 @@ class ViewerControls(
     val listButton: TextView
     private val titleView: TextView
     private val titleArea=LinearLayout(activity).apply {orientation=VERTICAL;gravity=Gravity.CENTER_VERTICAL;minimumHeight=ui.dp(48)}
-    private var locationAction: (() -> Unit)? = null
-    private var locationLabel="페이지로 이동"
     private val top = LinearLayout(activity).apply { gravity=Gravity.CENTER_VERTICAL;setBackgroundColor(ui.navy) }
     private val notice: TextView
     private val noticeArea=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setBackgroundColor(ui.surface);visibility=View.GONE;setPadding(ui.dp(12),ui.dp(4),ui.dp(8),ui.dp(4))}
@@ -58,10 +52,15 @@ class ViewerControls(
     private val searchBar = LinearLayout(activity).apply {orientation=VERTICAL;visibility=View.GONE;setBackgroundColor(ui.surface)}
     private val searchInput = ui.searchInput().apply {contentDescription="문서 검색어";imeOptions=EditorInfo.IME_ACTION_SEARCH}
     private val searchResult = ui.label("검색어를 입력해 주세요",12f,color=ui.muted)
-    private val nextResult = ui.button("다음 검색 결과","다음") {}
+    private val nextResult = ui.button("다음 검색 결과","다음") {}.apply {visibility=GONE;isEnabled=false}
+    private val submit = ui.button("찾기","검색") {}
+    private var searchActive = false
+    private var openNavigation: () -> Unit = {}
+    private val pageInput=ui.searchInput().apply {contentDescription="페이지 번호";hint="페이지";inputType=android.text.InputType.TYPE_CLASS_NUMBER;setCompoundDrawables(null,null,null,null)}
+    private val pageGo=ui.button("페이지로 이동") {}.apply {text="이동";setPadding(ui.dp(8),0,ui.dp(8),0)}
     private var closeSearchAction: () -> Unit = {}
     private var submitSearchAction: (String) -> Unit = {}
-    val searchIsOpen get() = searchBar.visibility == View.VISIBLE
+    val searchIsOpen get() = searchActive
 
     init {
         orientation=VERTICAL
@@ -78,21 +77,22 @@ class ViewerControls(
         val inputRow=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(8),ui.dp(4),ui.dp(4),0)}
         searchInput.minimumHeight=ui.dp(48)
         inputRow.addView(searchInput,LayoutParams(0,-2,1f))
-        val submit=ui.button("찾기","검색") {}
-        inputRow.addView(submit,LayoutParams(ui.dp(48),ui.dp(48)))
-        inputRow.addView(ui.button("검색 닫기","닫기"){closeSearch()},LayoutParams(ui.dp(48),ui.dp(48)))
+        inputRow.addView(submit,LayoutParams(LayoutParams.WRAP_CONTENT,ui.dp(48)))
         searchBar.addView(inputRow)
         val resultRow=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(16),0,ui.dp(4),ui.dp(4))}
         searchResult.maxLines=1;searchResult.ellipsize=TextUtils.TruncateAt.END
         resultRow.addView(searchResult,LayoutParams(0,ui.dp(48),1f))
         resultRow.addView(nextResult,LayoutParams(ui.dp(48),ui.dp(48)))
         searchBar.addView(resultRow)
-        addView(searchBar)
         submit.setOnClickListener {submitSearch()}
         searchInput.setOnEditorActionListener {_,action,_->if(action==EditorInfo.IME_ACTION_SEARCH){submitSearch();true}else false}
         notice=ui.label("",14f,color=ui.danger).apply {setPadding(ui.dp(8),ui.dp(10),ui.dp(8),ui.dp(10))}
         noticeArea.addView(progress,LayoutParams(ui.dp(24),ui.dp(24)))
         noticeArea.addView(notice,LayoutParams(0,-2,1f));noticeArea.addView(noticeAction)
+        val pageRow=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(8),0,ui.dp(4),ui.dp(4))}
+        pageRow.addView(pageInput,LayoutParams(0,ui.dp(44),1f))
+        pageRow.addView(pageGo,LayoutParams(LayoutParams.WRAP_CONTENT,ui.dp(44)))
+        searchBar.addView(pageRow)
         addView(noticeArea)
         status.addTextChangedListener(object:TextWatcher {
             override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int)=Unit
@@ -113,21 +113,30 @@ class ViewerControls(
     }
 
     fun showSearch(query:String,context:String="문서 검색",next:(()->Unit)?=null,closed:()->Unit={},submit:(String)->Unit) {
+        openNavigation()
         if(searchIsOpen){searchInput.requestFocus();return}
+        searchActive=true
+        val typed=searchInput.text.toString()
+        searchInput.inputType=android.text.InputType.TYPE_CLASS_TEXT
+        searchInput.contentDescription="문서 검색어";searchInput.hint="검색어 입력"
+        this.submit.text="찾기";this.submit.contentDescription="찾기"
         submitSearchAction=submit;closeSearchAction=closed
         nextResult.visibility=if(next==null)View.GONE else View.VISIBLE;nextResult.isEnabled=false
         nextResult.setOnClickListener {next?.invoke()}
-        searchInput.setText(query);searchInput.setSelection(query.length)
+        searchInput.setText(typed.ifBlank {query});searchInput.setSelection(searchInput.text.length)
+        searchResult.setTextColor(ui.muted)
         searchResult.text="$context · 검색어를 입력해 주세요";searchBar.visibility=View.VISIBLE
         searchInput.requestFocus()
         searchInput.post {(activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(searchInput,InputMethodManager.SHOW_IMPLICIT)}
     }
 
     private fun submitSearch() {
+        if(!searchActive)onSearch?.invoke()
         val query=searchInput.text.toString()
         if(query.isBlank()){searchInput.error="검색어를 입력해 주세요";return}
         (activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(searchInput.windowToken,0)
-        setSearchResult("검색 중");submitSearchAction(query)
+        setSearchResult("검색 중")
+        submitSearchAction(query)
     }
 
     fun setSearchResult(message:String,canNext:Boolean=false) {
@@ -136,7 +145,7 @@ class ViewerControls(
 
     fun closeSearch() {
         if(!searchIsOpen)return
-        searchBar.visibility=View.GONE
+        searchActive=false
         (activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(searchInput.windowToken,0)
         searchInput.clearFocus();closeSearchAction()
     }
@@ -144,7 +153,9 @@ class ViewerControls(
     fun setTitle(title:String) {titleView.text=title}
 
     fun setReadingAction(editing:Boolean,enabled:Boolean,toggle:()->Unit) {
-        val button=readingAction?:action("읽기",toggle).also {top.addView(it,2,LayoutParams(ui.dp(48),ui.dp(48)));readingAction=it}
+        val button=readingAction?:action("읽기",toggle).apply {
+            setSingleLine();setPadding(ui.dp(4),0,ui.dp(4),0)
+        }.also {top.addView(it,2,LayoutParams(ui.dp(48),ui.dp(48)));readingAction=it}
         button.text=if(editing)"필기"else"읽기";button.contentDescription=if(editing)"읽기 모드로 전환"else"필기 시작"
         button.setTextColor(if(editing)ui.navy else Color.WHITE)
         button.background=RippleDrawable(ColorStateList.valueOf(0x307f9fc9),ui.rounded(if(editing)Color.WHITE else Color.TRANSPARENT,20,if(editing)null else activity.getColor(R.color.ui_accent_dark)),null)
@@ -163,32 +174,41 @@ class ViewerControls(
     }
 
     fun setLocationAction(label:String="페이지로 이동",action:()->Unit) {
-        locationLabel=label;locationAction=action
+        titleArea.contentDescription="현재 위치, $label"
         titleArea.setOnClickListener {action()}
         titleArea.background=RippleDrawable(ColorStateList.valueOf(0x307f9fc9),null,null)
     }
 
-    fun showPageJump(current:Int,count:Int,go:(Int)->Unit) {
+    fun setListNavigation(open:()->Unit) {openNavigation=open}
+
+    fun attachListNavigation(host:LinearLayout,current:Int,count:Int,go:(Int)->Unit) {
+        (searchBar.parent as? android.view.ViewGroup)?.removeView(searchBar)
+        host.addView(searchBar,0,LayoutParams(-1,-2))
+        searchBar.visibility=VISIBLE
+        pageInput.setText((current+1).toString());pageInput.hint="1–${count}쪽"
+        pageGo.setOnClickListener {
+            val page=pageInput.text.toString().toIntOrNull()
+            if(page==null||page !in 1..count){searchResult.text="1–${count}쪽 사이의 번호를 입력해 주세요";searchResult.setTextColor(ui.danger)}
+            else {
+                (activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(pageInput.windowToken,0)
+                go(page-1);searchResult.setTextColor(ui.muted);searchResult.text="${page} / ${count}쪽"
+            }
+        }
+        pageInput.setOnEditorActionListener {_,action,_->if(action==EditorInfo.IME_ACTION_SEARCH){pageGo.performClick();true}else false}
+    }
+
+    fun showPageJump(current:Int,count:Int) {
         if(count<=0)return
-        val body=LinearLayout(activity).apply {orientation=VERTICAL;setPadding(ui.dp(24),ui.dp(8),ui.dp(24),ui.dp(8))}
-        body.addView(ui.label("페이지 번호 · 1–$count",14f,true))
-        val input=android.widget.EditText(activity).apply {inputType=android.text.InputType.TYPE_CLASS_NUMBER;setSingleLine();contentDescription="페이지 번호";setText((current+1).toString());selectAll()}
-        val error=ui.label("",12f,color=ui.danger).apply {visibility=GONE}
-        body.addView(input);body.addView(error)
-        val dialog=android.app.AlertDialog.Builder(activity).setTitle("페이지로 이동").setView(body).setNegativeButton("취소",null).setPositiveButton("이동",null).create()
-        dialog.setOnShowListener {dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val page=input.text.toString().toIntOrNull()
-            if(page==null||page !in 1..count){error.text="1–${count}쪽 사이의 번호를 입력해 주세요";error.visibility=VISIBLE}
-            else {dialog.dismiss();go(page-1)}
-        }}
-        dialog.show()
+        openNavigation()
+        pageInput.setText((current+1).toString());pageInput.selectAll();pageInput.requestFocus()
+        pageInput.post {(activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(pageInput,InputMethodManager.SHOW_IMPLICIT)}
     }
 
     private fun showMenu(anchor:View) {
         val views=listOf("한쪽 보기","두쪽 보기","연속 보기","전체 페이지 보기")
-        fun section(name:String)=when {name in views||name in listOf("축소","확대","화면 맞춤")->"보기";name.contains("필기")||name=="읽기 모드"||name.contains("백업")->"필기·사본";else->"탐색"}
-        val actions=menuItems+listOf("이전 페이지" to onPrevious,"다음 페이지" to onNext,"축소" to onZoomOut,"확대" to onZoomIn)+
-            listOfNotNull(onFit?.let {"화면 맞춤" to it},locationAction?.let {locationLabel to it})
+        fun section(name:String)=when {name in views||name in listOf("화면 맞춤","문자 인코딩")->"보기";name.contains("필기")||name=="읽기 모드"||name.contains("백업")->"필기·사본";else->"탐색"}
+        val actions=menuItems+
+            listOfNotNull(onFit?.let {"화면 맞춤" to it})
         val body=LinearLayout(activity).apply {orientation=VERTICAL;setPadding(ui.dp(6),ui.dp(6),ui.dp(6),ui.dp(6))}
         val scroll=ScrollView(activity).apply {addView(body)}
         val visible=Rect();anchor.getWindowVisibleDisplayFrame(visible)
@@ -197,7 +217,7 @@ class ViewerControls(
             setBackgroundDrawable(activity.getDrawable(R.drawable.ui_popup_surface));elevation=ui.dp(8).toFloat();isOutsideTouchable=true
             inputMethodMode=PopupWindow.INPUT_METHOD_NOT_NEEDED
         }
-        for(group in listOf("보기","필기·사본","탐색")) {
+        for(group in listOf("보기","필기·사본")) {
             val items=actions.distinctBy {it.first}.filter {section(it.first)==group}.sortedBy {if(it.first in views)views.indexOf(it.first)else views.size}
             if(items.isEmpty())continue
             if(body.childCount>0)body.addView(View(activity).apply {setBackgroundColor(ui.line)},LayoutParams(-1,ui.dp(1)).apply {setMargins(ui.dp(10),ui.dp(6),ui.dp(10),ui.dp(6))})

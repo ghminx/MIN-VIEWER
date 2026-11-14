@@ -31,7 +31,7 @@ try {
  if (/documentsui/.test(screen())) run('shell','input','keyevent','BACK');
  run('shell','am','force-stop','org.minviewer.app');
  run('shell','am','start','-a','android.intent.action.VIEW','-t','application/pdf','-d',`content://media/external/file/${id}`,'-f','1','-p','org.minviewer.app');
- let xml=await wait(/PDF 1 \/ 1/);tap(xml,'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/필기 준비 완료/);
+ let xml=await wait(/PDF 1 \/ 1/);tap(xml,'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','300','700','600','700');await wait(/필기 저장 완료/);
  run('shell','input','keyevent','BACK');xml=await wait(new RegExp(sourcePattern));assert.doesNotMatch(xml,/필기 문서|필기 있음/);
  tap(xml,sourcePattern);await wait(/필기 복원 완료/);run('shell','input','keyevent','BACK');

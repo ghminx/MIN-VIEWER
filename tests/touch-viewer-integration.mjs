@@ -33,8 +33,8 @@ try{
   x=await wait(/PDF 1 \/ 4[^\"]*2[0-9][0-9]%/);capture('phone-zoom');
   tap(x,'더보기');tap(await wait(/화면 맞춤/),'화면 맞춤');await wait(/PDF 1 \/ 4[^\"]*100%/);
   tap(screen(),'PDF 1 / 4[^\"]*');x=await wait(/페이지 번호/);
-  tap(x,'페이지 번호');run('shell','input','keyevent','KEYCODE_MOVE_END');run('shell','input','keyevent','KEYCODE_DEL');run('shell','input','text','0');tap(await wait(/text="0"/),'이동');x=await wait(/1–4쪽 사이/);
-  tap(x,'페이지 번호');run('shell','input','keyevent','KEYCODE_DEL');run('shell','input','text','3');tap(await wait(/text="3"/),'이동');await wait(/PDF 3 \/ 4/);
+  tap(x,'페이지 번호');run('shell','input','keyevent','KEYCODE_MOVE_END');run('shell','input','keyevent','KEYCODE_DEL');run('shell','input','text','0');tap(await wait(/text="0"/),'페이지로 이동');x=await wait(/1–4쪽 사이/);
+  tap(x,'페이지 번호');run('shell','input','keyevent','KEYCODE_DEL');run('shell','input','text','3');tap(await wait(/text="3"/),'페이지로 이동');await wait(/PDF 3 \/ 4/);
   console.log('가장자리 탭·스와이프·두 번 탭·핀치 확대·확대 중 오넘김 방지·페이지 번호 입력 확인');
   tap(screen(),'더보기');tap(await wait(/두쪽 보기/),'두쪽 보기');await wait(/PDF 2 \/ 4/);
   run('shell','input','tap','365','430');await wait(/PDF 4 \/ 4/);run('shell','input','tap','25','430');await wait(/PDF 2 \/ 4/);
@@ -46,7 +46,7 @@ try{
  }
  if(process.argv.includes('--finger')){
   run('shell','wm','size','390x844');await wait(/PDF 1 \/ 4/);
-  tap(screen(),'필기 시작');await wait(/필기 준비 완료/);tap(screen(),'필기 도구 메뉴');tap(await wait(/손가락 필기/),'손가락 필기');
+  tap(screen(),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);tap(screen(),'필기 도구 메뉴');tap(await wait(/손가락 필기/),'손가락 필기');
   run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','finger','340','430','370','440');await wait(/필기 저장 완료/);assert.match(screen(),/PDF 1 \/ 4/);
   tap(screen(),'읽기 모드로 전환');await wait(/content-desc="필기 시작"/);
   run('shell','input','tap','365','430');await wait(/PDF 2 \/ 4/);
@@ -66,7 +66,7 @@ try{
   console.log('CSV 상단 행 이동·1000행 경계 연속 스크롤·핀치 확대 확인');
  }
  if(process.argv.includes('--ink')){
-  tap(x,'필기 시작');x=await wait(/필기 준비 완료/);
+  tap(x,'필기 시작');x=await wait(/content-desc="읽기 모드로 전환"/);
   assert.ok(box(x,'펜, 선택됨')[1]>600,'휴대폰 세로에서는 필기 도구를 하단에 배치해야 함');capture('phone-ink');
   run('shell','wm','size','1280x800');x=await wait(/필기 복원 완료/);
   assert.ok(box(x,'펜, 선택됨')[3]<180,'넓은 창에서는 필기 도구를 상단에 배치해야 함');capture('tablet-ink');

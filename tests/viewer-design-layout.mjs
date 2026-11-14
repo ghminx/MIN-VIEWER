@@ -24,9 +24,9 @@ try {
   x=await wait(/text="한글"[^>]*selected="true"/);capture(`home-${name}`);
   run('shell','wm','size',size);
   run('shell','am','start','-a','android.intent.action.VIEW','-t','application/pdf','-d',`content://media/external/file/${id}`,'-f','1','-p','org.minviewer.app');
-  x=await wait(/PDF 1쪽/);tap(x,'더보기');tap(await wait(/전체 페이지 보기/),'전체 페이지 보기');x=await wait(/필기한 페이지/);
-  assert.ok(bounds(x,'페이지 목록 닫기')[1]>=20);capture(`pages-${name}`);tap(x,'미리보기 1쪽');await wait(/PDF 1쪽/);
-  tap(screen(),'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/필기 준비 완료/);tap(screen(),'펜');x=await wait(/펜 설정/);
+  x=await wait(/PDF 1쪽/);tap(x,'목록');x=await wait(/content-desc="페이지 목록"/);
+  if(/페이지 목록 닫기/.test(x))assert.ok(bounds(x,'페이지 목록 닫기')[1]>=20);capture(`pages-${name}`);tap(x,'미리보기 1쪽');await wait(/PDF 1쪽/);
+  tap(screen(),'더보기');tap(await wait(/필기 시작/),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);tap(screen(),'펜');x=await wait(/펜 설정/);
   if(!/text="굵게"/.test(x)){run('shell','input','swipe',String(width/2),String(height*.7),String(width/2),String(height*.3),'350');x=await wait(/굵게/);}
   const b=bounds(x,'굵게');assert.ok(b[2]-b[0]>=48&&b[3]-b[1]>=48,'가로·좁은 창에서도 굵기 도구에 접근 필요');
   capture(`tools-${name}`);run('shell','input','keyevent','BACK');

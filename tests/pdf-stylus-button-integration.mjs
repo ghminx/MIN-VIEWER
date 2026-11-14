@@ -28,7 +28,7 @@ try {
  run('shell','input','tap',String((+bounds[1]+ +bounds[3])/2),String((+bounds[2]+ +bounds[4])/2));
  tap(await wait(/PDF 1 \/ 1/),'더보기');
  if(process.argv.includes('--continuous')){tap(await wait(/연속 보기/),'연속 보기');tap(await wait(/PDF 1 \/ 1/),'더보기');}
- tap(await wait(/필기 시작/),'필기 시작');await wait(/필기 준비 완료/);
+ tap(await wait(/필기 시작/),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  gesture(700);await wait(/필기 저장 완료/);capture('pen');assert.ok(pixels('pen','red')>300,'원래 펜 획 표시 필요');
  if(process.argv.includes('--button-tap-only')){
   run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','450','700','450','700','button-tap');
@@ -69,7 +69,7 @@ try {
  run('shell','input','keyevent','BACK');run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
  const title=source.replaceAll('.','\\.');tap(await wait(new RegExp(title)),title);await wait(/PDF 1 \/ 1/);
  assert.doesNotMatch(screen(),/content-desc="지우개, 선택됨"/,'재열기는 읽기 모드로 시작해야 함');
- tap(screen(),'필기 시작');await wait(/필기 준비 완료/);capture('reopened');
+ tap(screen(),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);capture('reopened');
  assert.equal(pixels('reopened','yellow'),yellow,'재열기 후 버튼 지우개와 필기 결과 복원 필요');
  assert.doesNotMatch(screen(),/content-desc="지우개, 선택됨"/,'일시 지우개 상태를 저장하면 안 됨');
  assert.equal(run('shell','sha256sum',`/sdcard/Download/${source}`).trim().split(/\s+/)[0],createHash('sha256').update(readFileSync('.research/pdf-ink-test/button.pdf')).digest('hex'));

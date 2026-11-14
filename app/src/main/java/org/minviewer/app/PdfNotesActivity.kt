@@ -191,7 +191,7 @@ class PdfNotesActivity : Activity() {
     private fun prepareBackup(item: PdfNoteEntry) {
         val storage = store; val current = session; val cache = cacheDir
         val name = item.name.substringBeforeLast('.').replace(Regex("[\\\\/\\p{Cntrl}]"), "_").take(80) + ".minviewer.zip"
-        work("백업 준비 중 · 원본 PDF와 필기를 함께 보관합니다") {
+        work("백업 준비 중 · 원본 문서·필기 배경·필기를 함께 보관합니다") {
             val file = File(cache, "note-backup-${java.util.UUID.randomUUID()}.zip")
             if (!file.createNewFile()) throw IOException("백업 준비 파일을 만들 수 없습니다.")
             try {

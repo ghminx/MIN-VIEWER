@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var recent: RecentDocuments
     private var openingRecent = false
     private lateinit var content: LinearLayout
+    private lateinit var listPanel: LinearLayout
     private lateinit var list: ListView
     private var browser: WebView? = null
     private lateinit var emptyMessage: TextView
@@ -164,16 +165,15 @@ class MainActivity : Activity() {
             browser?.evaluateJavascript("window.nextHwpResult()") { value -> showHwpSearchResult(value, generation) }
         }.apply { visibility = View.GONE }
         viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpSearch.visibility == View.VISIBLE) searchHwp() },
-            { listVisible = !listVisible; updateLayout() }, { movePage(-1) }, { movePage(1) },
-            { browser?.zoomOut() }, { browser?.zoomIn() },
+            { listVisible = !listVisible; updateLayout() },
             listOf("한쪽 보기" to { changeHwpMode("single") }, "두쪽 보기" to { changeHwpMode("spread") },
                 "연속 보기" to { changeHwpMode("continuous") },
                 "다음 검색 결과" to { if (hwpNextSearch.visibility == View.VISIBLE) hwpNextSearch.performClick() },
                 "다른 파일 열기" to { pickDocument() }),
             selectedViewMode={when(hwpMode){"continuous"->"연속 보기";"spread"->"두쪽 보기";else->"한쪽 보기"}},
-            enabledMenuItem={name->when(name){"다음 검색 결과"->hwpNextSearch.visibility==View.VISIBLE;"이전 페이지"->pageIndex>0;"다음 페이지"->pageIndex<pageCount-1;else->pageCount>0}},onFit={browser?.zoomBy(1f/hwpZoom)})
+            enabledMenuItem={name->when(name){"다음 검색 결과"->hwpNextSearch.visibility==View.VISIBLE;else->pageCount>0}},onFit={browser?.zoomBy(1f/hwpZoom)})
         indicator = viewerControls.status
-        viewerControls.setLocationAction {viewerControls.showPageJump(pageIndex,pageCount){showPage(it)}}
+        viewerControls.setLocationAction {viewerControls.showPageJump(pageIndex,pageCount)}
         container.addView(viewerControls)
         hwpModes = LinearLayout(this).apply {
             visibility = View.GONE
@@ -191,7 +191,9 @@ class MainActivity : Activity() {
                 if (!UiStyle(this@MainActivity).useSidePanel()) { listVisible = false; updateLayout() }
             }
         }
-        content.addView(list)
+        listPanel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;visibility=View.GONE;addView(list,LinearLayout.LayoutParams(-1,0,1f))}
+        viewerControls.setListNavigation {listVisible=true;updateLayout()}
+        content.addView(listPanel)
         emptyMessage = TextView(this).apply { text = "파일을 선택해 주세요."; setPadding(24, 24, 24, 24) }
         content.addView(emptyMessage, LinearLayout.LayoutParams(0, -1, 1f))
         container.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -367,9 +369,10 @@ class MainActivity : Activity() {
     private fun updateLayout() {
         val wide = UiStyle(this).useSidePanel()
         content.orientation = LinearLayout.HORIZONTAL
-        list.visibility = if (listVisible) View.VISIBLE else View.GONE
+        if(listVisible&&listPanel.visibility!=View.VISIBLE)viewerControls.attachListNavigation(listPanel,pageIndex,pageCount){showPage(it)}
+        listPanel.visibility = if (listVisible) View.VISIBLE else View.GONE
         val listWidth = (if (wide) 200f else windowWidthDp().toFloat()) * resources.displayMetrics.density
-        list.layoutParams = LinearLayout.LayoutParams(listWidth.toInt(), -1)
+        listPanel.layoutParams = LinearLayout.LayoutParams(listWidth.toInt(), -1)
         browser?.let { view ->
             view.visibility = if (listVisible && !wide) View.GONE else View.VISIBLE
             view.layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
@@ -399,6 +402,7 @@ class MainActivity : Activity() {
                 return
             }
             if (resultCode == RESULT_OK) data?.data?.let {
+                if(requestCode==3&&it.authority=="$packageName.pdfnotes")documentUri?.let(recent::remove)
                 recent.add(it, data.getStringExtra("name") ?: selectedName)
                 if (data.hasExtra("view_page")) recent.updateView(it, data.getIntExtra("view_page", 0),
                     data.getStringExtra("view_mode") ?: "", data.getFloatExtra("view_zoom", 1f),
@@ -489,7 +493,7 @@ class MainActivity : Activity() {
                                     .putExtra("restore_page", saved?.page ?: 0).putExtra("restore_encoding", saved?.mode ?: "")
                                     .putExtra("restore_zoom", saved?.zoom ?: 1f)
                                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), 2)
-                            } else if (extension == "pdf" && launchOffice) {
+                            } else if ((extension == "pdf" && launchOffice) || uri.authority == "$packageName.pdfnotes") {
                                 releaseBrowser()
                                 documentSource = null
                                 documentUri = null

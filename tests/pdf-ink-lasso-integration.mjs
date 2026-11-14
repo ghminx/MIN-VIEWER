@@ -41,7 +41,7 @@ try {
  const file=picker.match(new RegExp(`<node[^>]*text="${title}"[^>]*class="android.widget.TextView"[^>]*>`))?.[0];
  const b=file?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(b,'시스템 파일 선택기의 시험 PDF 필요');
  run('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));
- let xml=await wait(/PDF 1 \/ 3/);tap(xml,'더보기');xml=await wait(/필기 시작/);tap(xml,'필기 시작');await wait(/필기 준비 완료/);
+ let xml=await wait(/PDF 1 \/ 3/);tap(xml,'더보기');xml=await wait(/필기 시작/);tap(xml,'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  tap(screen(),'색상');xml=await wait(/파랑/);tap(xml,'파랑');tap(await wait(/파랑, 선택됨/),'펜 설정 닫기');await wait(/content-desc="펜, 선택됨"/);
  gesture(300,700,600,700);await wait(/필기 저장 완료/);
  tap(screen(),'색상');xml=await wait(/빨강/);tap(xml,'빨강');tap(await wait(/빨강, 선택됨/),'펜 설정 닫기');await wait(/content-desc="펜, 선택됨"/);
@@ -106,7 +106,7 @@ try {
  run('shell','input','keyevent','BACK');run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
  xml=await wait(new RegExp(title));tap(xml,title);await wait(/PDF 2 \/ 3/);
  assert.doesNotMatch(screen(),/content-desc="펜, 선택됨"/);
- tap(screen(),'필기 시작');await wait(/필기 준비 완료/);
+ tap(screen(),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  assert.deepEqual(metrics('reopened'),landscape);assert.doesNotMatch(screen(),/text="복사"/);
  console.log('가로 회전·강제 종료·재열기 후 편집 결과와 보기 복원 확인');
  tap(screen(),'더보기');xml=await wait(/연속 보기/);tap(xml,'연속 보기');xml=await wait(/PDF [123] \/ 3/);
@@ -123,7 +123,7 @@ try {
  const toolbar=screen().match(/<node[^>]*content-desc="(?:크기 조절|선택 삭제|복사|선택 해제)"[^>]*>/)?.[0];
  const toolBounds=toolbar?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(toolBounds,'필기 도구 위치 필요');
  const toolY=String((Number(toolBounds[2])+Number(toolBounds[4]))/2);
- run('shell','input','swipe','370',toolY,'80',toolY,'350');xml=await wait(/text="선택 해제"/);tap(xml,'선택 해제');await wait(/필기 준비 완료/);
+ run('shell','input','swipe','370',toolY,'80',toolY,'350');xml=await wait(/text="선택 해제"/);tap(xml,'선택 해제');await wait(/content-desc="읽기 모드로 전환"/);
  assert.doesNotMatch(screen(),/text="복사"/);metrics('phone');
  console.log('좁은 휴대폰 창에서 선택 도구·크기 조절·선택 해제 접근 확인');
 } finally {run('shell','wm','size','reset');run('shell','wm','density','reset');}

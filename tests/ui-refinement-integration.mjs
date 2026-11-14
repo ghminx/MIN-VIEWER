@@ -31,15 +31,15 @@ try{
  tap(xml,'더보기');xml=await wait(/연속 보기/);
  const modes=[...xml.matchAll(/text="(한쪽 보기|두쪽 보기|연속 보기)"/g)].map(m=>m[1]);
  assert.deepEqual(modes,['한쪽 보기','두쪽 보기','연속 보기']);run('shell','input','keyevent','BACK');
- tap(screen(),'필기 시작');xml=await wait(/필기 준비 완료/);assert.match(xml,/content-desc="읽기 모드로 전환"/);assert.match(xml,/content-desc="펜, 선택됨"/);
+ tap(screen(),'필기 시작');xml=await wait(/content-desc="읽기 모드로 전환"/);assert.match(xml,/content-desc="읽기 모드로 전환"/);assert.match(xml,/content-desc="펜, 선택됨"/);
  capture('pdf-ink-tablet');tap(xml,'읽기 모드로 전환');xml=await wait(/읽기 모드/);assert.doesNotMatch(xml,/content-desc="펜, 선택됨"/);capture('pdf-read-tablet');
  console.log('읽기·필기 직접 전환과 도구 표시, 한쪽·두쪽·연속 메뉴 순서 통과');
- tap(xml,'검색');xml=screen();assert.match(xml,/content-desc="문서 검색어"/,'검색을 문서 위의 검색 행으로 표시해야 함');
+ tap(xml,'검색');xml=screen();assert.match(xml,/content-desc="문서 검색어"/,'검색을 페이지 목록 내부에 표시해야 함');
  tap(xml,'문서 검색어');run('shell','input','text','SEARCHABLE');tap(await wait(/text="SEARCHABLE"/),'찾기');
  xml=await wait(/검색 결과 · 이 페이지 1번째/);assert.match(xml,/content-desc="다음 검색 결과"/);
  tap(xml,'다음 검색 결과');await wait(/PDF 2 \/ 3/);capture('pdf-search-tablet');
- tap(screen(),'검색 닫기');xml=screen();assert.doesNotMatch(xml,/content-desc="문서 검색어"/);
- console.log('문서 위 검색 행의 실제 검색·다음 결과 이동·닫기 통과');
+ run('shell','input','keyevent','BACK');tap(screen(),'목록');xml=screen();assert.doesNotMatch(xml,/content-desc="문서 검색어"/);
+ console.log('목록 내부 검색창의 실제 검색·다음 결과 이동·닫기 통과');
  for(const label of ['문서 백업','필기 포함 PDF 내보내기']){
   tap(screen(),'더보기');tap(await wait(new RegExp(label)),label);await wait(/package="[^"]*documentsui"/);
   await dismissPicker();await wait(/작업을 취소했습니다/);tap(screen(),'문서 관리 닫기');await wait(/PDF 2 \/ 3/);

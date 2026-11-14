@@ -31,7 +31,7 @@ try{
     const b=box(x,label);assert.ok(b[0]>=0&&b[1]>=0&&b[2]<=width&&b[3]<=height,`${label} 창 내부 배치`);assert.ok(b[2]-b[0]>=48&&b[3]-b[1]>=48);
    }
    capture(`home-${name}-${appearance==='라이트'?'light':'dark'}`);tap(x,title);x=await wait(/PDF [123] \/ 3/);
-   assert.doesNotMatch(x,/content-desc="펜, 선택됨"/);tap(x,'필기 시작');await wait(/필기 준비 완료/);
+   assert.doesNotMatch(x,/content-desc="펜, 선택됨"/);tap(x,'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
    tap(screen(),'펜');x=await wait(/펜 설정/);const close=box(x,'펜 설정 닫기');assert.ok(close[0]>=0&&close[2]<=width&&close[3]<=height);
    if(!/text="굵게"/.test(x)){
     const scroll=x.match(/<node[^>]*class="android.widget.ScrollView"[^>]*>/)?.[0];assert.ok(scroll,'펜 설정의 스크롤 영역 필요');

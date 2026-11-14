@@ -19,7 +19,7 @@ run('shell','wm','size','1000x1600');run('shell','wm','density','160');
 run('shell','am','start','-a','android.intent.action.VIEW','-t','application/pdf','-d',`content://media/external/file/${id}`,'-f','1','-p','org.minviewer.app');
 let xml=await waitFor(/PDF 1 \/ 3/);
 tap(xml,'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');
-await waitFor(/필기 준비 완료/);
+await waitFor(/content-desc="읽기 모드로 전환"/);
 tap(screen(),'더보기');xml=await waitFor(/손가락 필기/);tap(xml,'손가락 필기');
 run('push','.research/pdf-ink-test/ink-gesture.jar','/data/local/tmp/min-ink-gesture.jar');
 run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','finger','300','750','550','950');
@@ -39,7 +39,7 @@ const pageBounds=(xml,page)=>{const n=xml.match(new RegExp(`<node[^>]*content-de
 const draw=(b)=>{const x=(b[0]+b[2])/2,y=(b[1]+b[3])/2,d=Math.min(b[2]-b[0],b[3]-b[1])*.12;run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen',String(Math.round(x-d)),String(Math.round(y-d)),String(Math.round(x+d)),String(Math.round(y+d)));};
 tap(screen(),'더보기');xml=await waitFor(/두쪽 보기/);tap(xml,'두쪽 보기');
 xml=await waitFor(/PDF 1 \/ 3/);tap(xml,'다음');xml=await waitFor(/PDF 2 \/ 3/);
-tap(xml,'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/필기 준비 완료/);
+tap(xml,'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/content-desc="읽기 모드로 전환"/);
 xml=screen();draw(pageBounds(xml,2));await waitFor(/필기 저장 완료/);
 draw(pageBounds(screen(),3));await waitFor(/필기 저장 완료/);
 run('shell','screencap','-p','/sdcard/min-ink-two.png');run('pull','/sdcard/min-ink-two.png','.research/pdf-ink-test/two.png');
@@ -52,7 +52,7 @@ execFileSync('python',['-c',"import sys;sys.path.insert(0,'.research/py');from P
 console.log('가로 창 전환 뒤 양쪽 페이지의 필기 유지 확인');
 tap(screen(),'더보기');xml=await waitFor(/연속 보기/);tap(xml,'연속 보기');
 xml=await waitFor(/PDF [123] \/ 3/);
-tap(xml,'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/필기 준비 완료/);
+tap(xml,'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/content-desc="읽기 모드로 전환"/);
 xml=screen();const visible=xml.match(/content-desc="PDF (\d+)쪽"/)?.[1];assert.ok(visible);draw(pageBounds(xml,+visible));await waitFor(/필기 저장 완료/);
 console.log('연속 보기의 펜 입력·저장 확인');
 run('shell','screencap','-p','/sdcard/min-ink-before-cancel.png');run('pull','/sdcard/min-ink-before-cancel.png','.research/pdf-ink-test/before-cancel.png');
@@ -65,7 +65,7 @@ for (const [label,size] of [['한쪽 보기','1600x1000'],['연속 보기','1000
     run('shell','wm','size',size);await delay(600);
     tap(screen(),'더보기');xml=await waitFor(new RegExp(label));tap(xml,label);
     await waitFor(/PDF [123] \/ 3/);
-    tap(screen(),'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/필기 준비 완료/);
+    tap(screen(),'더보기');xml=await waitFor(/필기 시작/);tap(xml,'필기 시작');await waitFor(/content-desc="읽기 모드로 전환"/);
     xml=screen();const page=Number(xml.match(/content-desc="PDF (\d+)쪽"/)?.[1]);assert.ok(page);draw(pageBounds(xml,page));await waitFor(/필기 저장 완료/);
     console.log(`${label} ${size}: 펜 입력·저장 확인`);
 }

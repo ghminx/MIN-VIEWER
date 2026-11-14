@@ -82,7 +82,7 @@ class DocumentLibraryView(activity: Activity, private val onOpen: () -> Unit,
         val holder=FrameLayout(context)
         grid=GridView(context).apply {
             numColumns=if(rows)1 else GridView.AUTO_FIT;columnWidth=ui.dp(if(expanded)180 else 136);stretchMode=GridView.STRETCH_COLUMN_WIDTH
-            horizontalSpacing=ui.dp(16);verticalSpacing=ui.dp(16);clipToPadding=false
+            horizontalSpacing=ui.dp(16);verticalSpacing=ui.dp(16)
             setPadding(ui.dp(20),ui.dp(12),ui.dp(20),ui.dp(16));adapter=this@DocumentLibraryView.adapter
             setOnItemClickListener { _,_,position,_->shown[position].open() }
         }

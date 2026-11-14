@@ -63,11 +63,10 @@ class PdfActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var list: ListView
     private lateinit var horizontal: HorizontalScrollView
-    private lateinit var contentRow: LinearLayout
+    private lateinit var contentRow: android.widget.FrameLayout
     private var thumbnailPanel: LinearLayout? = null
     private var pageOverview: android.app.Dialog? = null
     private var restoreOverview = false
-    private var onlyInkPages = false
     private var previewRecorded = false
     private lateinit var nextSearch: Button
     private var renderer: PdfRenderer? = null
@@ -146,6 +145,10 @@ class PdfActivity : Activity() {
     private lateinit var inkPanel: LinearLayout
     private lateinit var inkDock: LinearLayout
     private var inkCollapsed = false
+    private var inkChromeExpanded = false
+    private var inkChromeAnimating = false
+    private var thumbnailAnimator: android.animation.ValueAnimator? = null
+    private var touchOnOverlay = false
     private lateinit var inkRetry: Button
     private var penColor = Color.RED
     private var penWidth = 0.004f
@@ -171,7 +174,7 @@ class PdfActivity : Activity() {
         inkSelection = null
         selectionPreview = null
         movingSelection = false
-        if (!inkDirty) inkStatus.text = "필기 준비 완료"
+        if (!inkDirty) inkStatus.text = ""
         invalidateInk()
     }
 
@@ -212,7 +215,6 @@ class PdfActivity : Activity() {
             controls.setReadingAction(inkEnabled, openedSuccessfully && !inkPreparing) {
                 if (inkEnabled) stopInk() else beginInk()
             }
-            inkTools.visibility = if (inkEnabled) View.VISIBLE else View.GONE
             if(::inkDock.isInitialized)updateInkChrome()
         }
         for (i in 0 until list.childCount) {
@@ -363,7 +365,7 @@ class PdfActivity : Activity() {
         if (!openedSuccessfully || inkPreparing) return
         inkStatus.visibility = View.VISIBLE
         if (encryptedDocument) { inkStatus.text = "암호 PDF의 필기는 아직 지원하지 않습니다."; return }
-        if (inkNote != null) { inkEnabled = true; inkTools.visibility=View.VISIBLE; invalidateInk(); inkStatus.text = "필기 준비 완료"; return }
+        if (inkNote != null) { inkEnabled = true; inkStatus.text = ""; invalidateInk(); return }
         val uri = intent.data ?: return
         inkPreparing = true
         invalidateInk()
@@ -431,11 +433,11 @@ class PdfActivity : Activity() {
         mode = savedInstanceState?.getInt("mode") ?: intent.getIntExtra("restore_mode", 1)
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
         restoreOverview = savedInstanceState?.getBoolean("pageOverview") ?: false
-        onlyInkPages = savedInstanceState?.getBoolean("onlyInkPages") ?: false
         zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         pageOffsetX = savedInstanceState?.getFloat("pageOffsetX") ?: 0f
         pageOffsetY = savedInstanceState?.getFloat("pageOffsetY") ?: 0f
-        inkEnabled = savedInstanceState?.getBoolean("inkEnabled") ?: false
+        inkEnabled = savedInstanceState?.getBoolean("inkEnabled") ?: intent.getBooleanExtra("start_ink",false)
+        enableInkAfterOpen = savedInstanceState==null&&intent.getBooleanExtra("start_ink",false)
         fingerInk = savedInstanceState?.getBoolean("fingerInk") ?: false
         penColor = savedInstanceState?.getInt("penColor") ?: Color.RED
         penWidth = savedInstanceState?.getFloat("penWidth") ?: 0.004f
@@ -448,8 +450,8 @@ class PdfActivity : Activity() {
         }
         val title=(intent.getStringExtra("name")?:"PDF").let {if(intent.data?.authority=="$packageName.pdfnotes")it.removePrefix("[필기] ")else it}
         controls = ViewerControls(this, title, { finish() }, { searchDocument() },
-            { showThumbnails() }, { movePage(-1) }, { movePage(1) }, { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) },
-            listOf("한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "연속 보기" to { setMode(0) }, "전체 페이지 보기" to { showPageOverview() },
+            { showThumbnails() },
+            listOf("한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "연속 보기" to { setMode(0) },
                 "필기 시작" to { beginInk() }, "손가락 필기" to {
                     inkStatus.visibility = View.VISIBLE
                     if (inkNote == null) { inkStatus.text = "먼저 필기 시작을 선택해 주세요." }
@@ -460,9 +462,10 @@ class PdfActivity : Activity() {
                 "필기 포함 PDF 내보내기" to {openInkActions("export")}, "문서 백업" to {openInkActions("backup")},
                 "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }),
             selectedViewMode={listOf("연속 보기","한쪽 보기","두쪽 보기")[mode]},
-            enabledMenuItem={name->when(name){"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->nextSearch.isEnabled;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;"이전 페이지"->pageIndex>0;"다음 페이지"->pageIndex<pageCount-1;else->openedSuccessfully}},onFit={setZoom(1f)})
+            enabledMenuItem={name->when(name){"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->nextSearch.isEnabled;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={setZoom(1f)})
         status = controls.status
-        controls.setLocationAction {controls.showPageJump(pageIndex,pageCount){showPage(it)}}
+        controls.setListNavigation {if(thumbnailPanel==null&&pageOverview==null)showThumbnails()}
+        controls.setLocationAction {controls.showPageJump(pageIndex,pageCount)}
         controls.setReadingAction(false, false) { beginInk() }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
@@ -547,9 +550,8 @@ class PdfActivity : Activity() {
         }
         horizontal = HorizontalScrollView(this).apply { addView(list) }
         horizontal.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeDocument() }
-        contentRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(horizontal, LinearLayout.LayoutParams(0, -1, 1f))
+        contentRow = android.widget.FrameLayout(this).apply {
+            addView(horizontal, android.widget.FrameLayout.LayoutParams(-1,-1))
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -577,9 +579,8 @@ class PdfActivity : Activity() {
                 override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){updateInkChrome()}
             })
             updateInkChrome()
-            if(inkAtTop())addView(inkDock)
+            contentRow.addView(inkDock,android.widget.FrameLayout.LayoutParams(-1,-2,if(inkAtTop())android.view.Gravity.TOP else android.view.Gravity.BOTTOM))
             addView(contentRow, LinearLayout.LayoutParams(-1, 0, 1f))
-            if(!inkAtTop())addView(inkDock)
         })
         val uri = intent.data ?: run { status.text = "PDF 오류: 파일이 없습니다."; return }
         openDocument(uri, null)
@@ -594,12 +595,32 @@ class PdfActivity : Activity() {
         val collapsed=short&&inkCollapsed&&!failed
         controls.setInkToolsAction(inkEnabled&&short&&!failed,collapsed){inkCollapsed=!inkCollapsed;updateInkChrome()}
         val notice=inkPreparing||failed||inkStatus.text.startsWith("암호 PDF")
-        inkDock.visibility=if((inkEnabled&&!collapsed)||notice)View.VISIBLE else View.GONE
-        inkTools.visibility=if(inkEnabled&&!collapsed)View.VISIBLE else View.GONE
+        val expanded=inkEnabled&&!collapsed
+        if(expanded!=inkChromeExpanded) {
+            inkChromeExpanded=expanded
+            inkPanel.animation?.setAnimationListener(null)
+            inkPanel.clearAnimation()
+            inkChromeAnimating=true
+            inkPanel.startAnimation(android.view.animation.TranslateAnimation(
+                android.view.animation.Animation.RELATIVE_TO_SELF,0f,android.view.animation.Animation.RELATIVE_TO_SELF,0f,
+                android.view.animation.Animation.RELATIVE_TO_SELF,if(expanded)-1f else 0f,
+                android.view.animation.Animation.RELATIVE_TO_SELF,if(expanded)0f else -1f
+            ).apply {
+                duration=280;interpolator=android.view.animation.DecelerateInterpolator()
+                setAnimationListener(object:android.view.animation.Animation.AnimationListener {
+                    override fun onAnimationStart(animation:android.view.animation.Animation)=Unit
+                    override fun onAnimationRepeat(animation:android.view.animation.Animation)=Unit
+                    override fun onAnimationEnd(animation:android.view.animation.Animation){inkChromeAnimating=false;updateInkChrome()}
+                })
+            })
+        }
+        inkDock.visibility=if(expanded||notice||inkChromeAnimating)View.VISIBLE else View.GONE
+        inkTools.visibility=if(expanded||inkChromeAnimating)View.VISIBLE else View.GONE
         val inline=inkAtTop()&&!failed
         inkPanel.orientation=if(inline)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         inkTools.layoutParams=if(inline)LinearLayout.LayoutParams(0,-2,1f)else LinearLayout.LayoutParams(-1,-2)
         inkStatus.layoutParams=LinearLayout.LayoutParams(if(inline)ui.dp(180)else -1,-2)
+        inkStatus.visibility=if(inkStatus.text.isNotBlank()&&(inkEnabled||notice))View.VISIBLE else View.GONE
         inkStatus.setTextColor(if(failed)ui.danger else ui.muted)
         inkRetry.visibility=if(failed&&inkDirty)View.VISIBLE else View.GONE
     }
@@ -636,6 +657,13 @@ class PdfActivity : Activity() {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         updateStylusEraser(event)
+        if(event.actionMasked==MotionEvent.ACTION_DOWN) {
+            val bounds=android.graphics.Rect()
+            touchOnOverlay=listOfNotNull(thumbnailPanel,if(::inkDock.isInitialized)inkDock else null).any {
+                it.visibility==View.VISIBLE&&it.getGlobalVisibleRect(bounds)&&bounds.contains(event.rawX.toInt(),event.rawY.toInt())
+            }
+        }
+        if(touchOnOverlay)return super.dispatchTouchEvent(event)
         if (handleInk(event)) return true
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val location = IntArray(2)
@@ -930,7 +958,7 @@ class PdfActivity : Activity() {
                             inkTools.visibility = View.VISIBLE
                             inkStatus.visibility = View.VISIBLE
                             inkEnabled = enableInkAfterOpen || inkEnabled
-                            inkStatus.text = if (enableInkAfterOpen) "필기 준비 완료 · 펜 입력" else "필기 복원 완료"
+                            inkStatus.text = if (enableInkAfterOpen) "" else "필기 복원 완료"
                             enableInkAfterOpen = false
                             if (retained?.note?.id == restoredNote.id && retained.dirty) persistInk(retained.note)
                         }
@@ -1036,7 +1064,8 @@ class PdfActivity : Activity() {
 
     private fun updateStatus() {
         status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
-        status.contentDescription = "PDF ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
+        val kind=if(intent.data?.authority=="$packageName.pdfnotes"&&intent.getStringExtra("name")?.endsWith(".pptx",true)==true)"PPT"else"PDF"
+        status.contentDescription = "$kind ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
         val currentView = Triple(pageIndex, mode, zoom)
         if (persistenceReady && currentView != lastSavedView) {
             intent.data?.let { recent.updateView(it, pageIndex, mode.toString(), zoom) }
@@ -1251,15 +1280,13 @@ class PdfActivity : Activity() {
     private fun pageList(sidebar: Boolean, choose: (Int) -> Unit): LinearLayout {
         val ui = UiStyle(this)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(ui.background) }
-        val filters = LinearLayout(this).apply { setPadding(ui.dp(8), ui.dp(4), ui.dp(8), ui.dp(4)) }
-        var pages = emptyList<Int>()
+        val pages = (0 until pageCount).toList()
         val grid = GridView(this).apply {
             contentDescription = "페이지 목록"; numColumns = if (sidebar) 1 else GridView.AUTO_FIT
             columnWidth = ui.dp(142); stretchMode = GridView.STRETCH_COLUMN_WIDTH
             horizontalSpacing = ui.dp(16); verticalSpacing = ui.dp(16)
             setPadding(ui.dp(16),ui.dp(12),ui.dp(16),ui.dp(16));clipToPadding=false
         }
-        val empty = ui.label("필기한 페이지가 없습니다",14f,color=ui.muted).apply { gravity=android.view.Gravity.CENTER }
         val adapter = object : BaseAdapter() {
             override fun getCount() = pages.size
             override fun getItem(position: Int) = pages[position]
@@ -1284,21 +1311,10 @@ class PdfActivity : Activity() {
                 return item
             }
         }
-        fun update() {
-            val marked=inkNote?.strokes.orEmpty().map {it.page}.toSet()
-            pages=(0 until pageCount).filter {!onlyInkPages||it in marked}
-            for(i in 0 until filters.childCount)filters.getChildAt(i).isSelected=(i==1)==onlyInkPages
-            adapter.notifyDataSetChanged()
-        }
-        filters.addView(ui.button(if(sidebar)"전체"else"전체 페이지"){onlyInkPages=false;update()},LinearLayout.LayoutParams(0,ui.dp(48),1f))
-        filters.addView(ui.button(if(sidebar)"필기"else"필기한 페이지"){onlyInkPages=true;update()},LinearLayout.LayoutParams(0,ui.dp(48),1f))
-        root.addView(filters)
-        if(sidebar)root.addView(ui.button("전체 페이지 보기"){showPageOverview()},LinearLayout.LayoutParams(-1,ui.dp(48)))
-        val holder=android.widget.FrameLayout(this)
-        holder.addView(grid,android.widget.FrameLayout.LayoutParams(-1,-1));holder.addView(empty,android.widget.FrameLayout.LayoutParams(-1,-1))
-        root.addView(holder,LinearLayout.LayoutParams(-1,0,1f));grid.emptyView=empty;grid.adapter=adapter
+        controls.attachListNavigation(root,pageIndex,pageCount,choose)
+        root.addView(grid,LinearLayout.LayoutParams(-1,0,1f));grid.adapter=adapter
         grid.setOnItemClickListener {_,_,position,_->choose(pages[position]);adapter.notifyDataSetChanged()}
-        update();grid.setSelection(pages.indexOf(pageIndex).coerceAtLeast(0))
+        grid.setSelection(pages.indexOf(pageIndex).coerceAtLeast(0))
         return root
     }
 
@@ -1323,7 +1339,8 @@ class PdfActivity : Activity() {
         root.addView(ui.label("페이지 · ${pageCount}쪽",20f,true).apply {setPadding(ui.dp(20),ui.dp(16),ui.dp(20),ui.dp(8))})
         root.addView(pageList(false){page->dialog.dismiss();showPage(page)},LinearLayout.LayoutParams(-1,0,1f))
         dialog.setContentView(root)
-        dialog.setOnDismissListener {pageOverview=null}
+        dialog.setOnDismissListener {pageOverview=null;thumbnailPanel?.let {controls.attachListNavigation(it,pageIndex,pageCount){page->showPage(page)}}}
+        dialog.window?.setWindowAnimations(R.style.PageListMotion)
         pageOverview=dialog;dialog.show();dialog.window?.setLayout(-1,-1)
         @Suppress("DEPRECATION")
         dialog.window?.decorView?.systemUiVisibility=if(ui.dark)0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
@@ -1331,13 +1348,25 @@ class PdfActivity : Activity() {
 
     private fun showThumbnails() {
         if(pageCount==0||searching)return
-        val selected=pageIndex
-        thumbnailPanel?.let {contentRow.removeView(it);thumbnailPanel=null;horizontal.post{if(!closed){(list.adapter as? BaseAdapter)?.notifyDataSetChanged();showPage(selected)}};return}
+        thumbnailPanel?.let {panel->
+            animateThumbnailPanel(panel,0){contentRow.removeView(panel);thumbnailPanel=null}
+            return
+        }
         if(!UiStyle(this).useSidePanel()){showPageOverview();return}
         val ui=UiStyle(this)
         val panel=pageList(true){showPage(it)}
-        thumbnailPanel=panel;contentRow.addView(panel,0,LinearLayout.LayoutParams(ui.dp(200),-1))
-        horizontal.post {if(!closed){(list.adapter as? BaseAdapter)?.notifyDataSetChanged();showPage(selected)}}
+        thumbnailPanel=panel;contentRow.addView(panel,android.widget.FrameLayout.LayoutParams(0,-1,android.view.Gravity.START))
+        animateThumbnailPanel(panel,ui.dp(200)){}
+    }
+
+    private fun animateThumbnailPanel(panel:View,target:Int,finished:()->Unit) {
+        thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
+        thumbnailAnimator=android.animation.ValueAnimator.ofInt(panel.layoutParams.width,target).apply {
+            duration=280;interpolator=android.view.animation.DecelerateInterpolator()
+            addUpdateListener {panel.layoutParams=panel.layoutParams.apply {width=it.animatedValue as Int}}
+            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){finished()}})
+            start()
+        }
     }
 
     private inner class PageAdapter : BaseAdapter() {
@@ -1434,12 +1463,13 @@ class PdfActivity : Activity() {
         outState.putFloat("highlighterWidth", highlighterWidth)
         outState.putBoolean("thumbnailPanel", thumbnailPanel != null)
         outState.putBoolean("pageOverview", pageOverview != null)
-        outState.putBoolean("onlyInkPages", onlyInkPages)
         super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
         closed = true
+        thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
+        inkPanel.animation?.setAnimationListener(null);inkPanel.clearAnimation()
         pageOverview?.dismiss()
         inkSettings?.dismiss()
         searchGeneration++

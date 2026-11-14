@@ -40,7 +40,7 @@ class PdfInkStore(private val root: File) {
         private val noteId = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
         private const val PDF_LIMIT = 512L * 1024 * 1024
         private const val INK_LIMIT = 8L * 1024 * 1024
-        private const val ARCHIVE_LIMIT = 522L * 1024 * 1024
+        private const val ARCHIVE_LIMIT = 1034L * 1024 * 1024
     }
     private fun directory(id: String): File {
         require(UUID.fromString(id).toString() == id) { "잘못된 필기 문서 ID" }
@@ -48,6 +48,54 @@ class PdfInkStore(private val root: File) {
     }
 
     fun original(id: String) = File(directory(id), "original.pdf")
+
+    fun createPresentation(source: File, snapshot: File, name: String, pages: Int, engineBuild: String, canceled: () -> Boolean): PdfInkNote = synchronized(storageLock) {
+        require(name.endsWith(".pptx", true) && source.length() in 1..PDF_LIMIT) { "지원하지 않는 PPTX 사본 또는 크기입니다." }
+        require(snapshot.length() in 1..PDF_LIMIT && pages > 0) { "PPT 필기 배경의 크기 또는 페이지 수가 잘못되었습니다." }
+        require(engineBuild.isNotBlank() && engineBuild.length <= 256)
+        ParcelFileDescriptor.open(snapshot, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                require(renderer.pageCount == pages) { "슬라이드와 필기 배경의 페이지 수가 다릅니다." }
+            }
+        }
+        // Office 단일 작업 큐의 준비 폴더만 정리하며 다른 프로세스의 복원 폴더와 분리
+        if(root.exists()) {
+            val files=root.listFiles()?:throw IOException("필기 보관함을 읽을 수 없습니다.")
+            files.filter {it.name.startsWith(".presentation-")&&noteId.matches(it.name.removePrefix(".presentation-"))}.forEach {
+                if(!it.deleteRecursively())throw IOException("중단된 PPT 필기 준비 파일을 정리할 수 없습니다.")
+            }
+        }
+        val stage = File(root, ".presentation-${UUID.randomUUID()}")
+        try {
+            val note = snapshot.inputStream().use { PdfInkStore(stage).create(it, name, pages) }
+            val dir = File(stage, note.id)
+            val pptx = File(dir, "source.pptx")
+            source.inputStream().use { input -> pptx.outputStream().use { output ->
+                copyBounded(input, output, PDF_LIMIT, canceled); output.fd.sync()
+            } }
+            val metadata = JSONObject().put("format", "pptx").put("bytes", pptx.length())
+                .put("sha256", hash(pptx, canceled)).put("engineBuild", engineBuild).put("policy", "all-slides-vector-pdf-v1")
+            File(dir, "source.json").outputStream().use { it.write(metadata.toString().toByteArray(Charsets.UTF_8)); it.fd.sync() }
+            if (canceled()) throw InterruptedIOException("작업을 취소했습니다.")
+            if (!dir.renameTo(directory(note.id))) throw IOException("필기 문서를 확정할 수 없습니다.")
+            note
+        } finally { stage.deleteRecursively() }
+    }
+
+    private fun presentationMetadata(dir: File, canceled: () -> Boolean): JSONObject? {
+        val metadata = File(dir, "source.json")
+        if (!metadata.isFile) {
+            require(!File(dir, "source.pptx").exists()) { "PPTX 사본의 정보가 없습니다." }
+            return null
+        }
+        checkJson(metadata, 16L * 1024, canceled)
+        val json = JSONObject(metadata.readText(Charsets.UTF_8))
+        val source = File(dir, "source.pptx")
+        require(json.getString("format") == "pptx" && json.getString("policy") == "all-slides-vector-pdf-v1" &&
+            json.getString("engineBuild").isNotBlank() && json.getString("engineBuild").length <= 256 &&
+            source.length() in 1..PDF_LIMIT && source.length() == json.getLong("bytes") && hash(source, canceled) == json.getString("sha256")) { "PPTX 원본 사본이 없거나 변경되었습니다." }
+        return json
+    }
 
     @JvmOverloads
     fun exportPdf(id: String, target: File, canceled: () -> Boolean, mergeAnnotations: Boolean = false) = synchronized(storageLock) {
@@ -139,9 +187,9 @@ class PdfInkStore(private val root: File) {
             if (data.getInt(i) != 0x06054b50 || (data.getShort(i + 20).toInt() and 0xffff) != tail.size - i - 22) continue
             val size = data.getInt(i + 12).toLong() and 0xffffffffL
             val offset = data.getInt(i + 16).toLong() and 0xffffffffL
-            // ZipFile이 과도한 중앙 목록을 메모리에 읽기 전에 3개 항목인 백업 형식 확인
+            // ZipFile 로딩 전 PDF 3개 또는 PPTX 4개 항목의 제한 확인
             require(data.getShort(i + 4).toInt() == 0 && data.getShort(i + 6).toInt() == 0 &&
-                data.getShort(i + 8).toInt() == 3 && data.getShort(i + 10).toInt() == 3 &&
+                data.getShort(i + 8).toInt() in 3..4 && data.getShort(i + 10) == data.getShort(i + 8) &&
                 size in 1..4096 && offset + size == file.length() - tail.size + i) { "백업 ZIP의 항목 수 또는 구조가 잘못되었습니다." }
             return
         }
@@ -158,11 +206,15 @@ class PdfInkStore(private val root: File) {
         require(pdf.length() in 1..PDF_LIMIT) { "원본 PDF의 크기 제한을 초과했습니다." }
         val pdfHash = hash(pdf, canceled)
         require(pdfHash == File(directory(id), "sha256").readText(Charsets.UTF_8)) { "원본 사본이 변경되어 백업할 수 없습니다." }
-        val manifest = JSONObject().put("format", "MIN_VIEWER_PDF_NOTE").put("version", 1)
+        val presentation = presentationMetadata(directory(id), canceled)
+        val manifest = JSONObject().put("format", "MIN_VIEWER_PDF_NOTE").put("version", if(presentation==null)1 else 2)
             .put("pdfBytes", pdf.length()).put("inkBytes", ink.length()).put("pdfSha256", pdfHash).put("inkSha256", hash(ink, canceled))
+        if (presentation != null) manifest.put("presentation", presentation)
         ZipOutputStream(output).use { zip ->
             zip.putNextEntry(ZipEntry("manifest.json")); zip.write(manifest.toString().toByteArray(Charsets.UTF_8)); zip.closeEntry()
-            listOf("original.pdf" to pdf, "note.json" to ink).forEach { (name, file) ->
+            val files = mutableListOf("original.pdf" to pdf, "note.json" to ink)
+            if (presentation != null) files.add("source.pptx" to File(directory(id), "source.pptx"))
+            files.forEach { (name, file) ->
                 zip.putNextEntry(ZipEntry(name)); file.inputStream().use { copyBounded(it, zip, file.length(), canceled) }; zip.closeEntry()
             }
         }
@@ -179,7 +231,7 @@ class PdfInkStore(private val root: File) {
             val id = UUID.randomUUID().toString()
             val dir = File(stage, id)
             if (!dir.mkdir()) throw IOException("복원 문서 폴더를 만들 수 없습니다.")
-            val limits = mapOf("manifest.json" to 16L * 1024, "original.pdf" to PDF_LIMIT, "note.json" to INK_LIMIT)
+            val limits = mapOf("manifest.json" to 16L * 1024, "original.pdf" to PDF_LIMIT, "note.json" to INK_LIMIT, "source.pptx" to PDF_LIMIT)
             ZipFile(archive).use { zip ->
                 val seen = mutableSetOf<String>()
                 val entries = zip.entries()
@@ -195,18 +247,25 @@ class PdfInkStore(private val root: File) {
                     }
                     require(size == entry.size && crc.value == entry.crc) { "백업 파일이 손상되었습니다." }
                 }
-                require(seen == limits.keys) { "백업에 필요한 파일이 없습니다." }
+                require(seen.containsAll(setOf("manifest.json", "original.pdf", "note.json"))) { "백업에 필요한 파일이 없습니다." }
             }
             val manifestFile = File(dir, "manifest.json")
             checkJson(manifestFile, 16L * 1024, canceled)
             val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
-            require(manifest.getString("format") == "MIN_VIEWER_PDF_NOTE" && manifest.getInt("version") == 1) { "지원하지 않는 백업 형식입니다." }
+            val version = manifest.getInt("version")
+            require(manifest.getString("format") == "MIN_VIEWER_PDF_NOTE" && version in 1..2) { "지원하지 않는 백업 형식입니다." }
+            require((version == 2) == manifest.has("presentation") && (version == 2) == File(dir,"source.pptx").exists()) { "PPTX 백업 구성 정보가 다릅니다." }
+            if (version == 2) {
+                File(dir,"source.json").outputStream().use { it.write(manifest.getJSONObject("presentation").toString().toByteArray(Charsets.UTF_8)); it.fd.sync() }
+                presentationMetadata(dir,canceled)
+            }
             val pdf = File(dir, "original.pdf"); val ink = File(dir, "note.json")
             require(pdf.length() == manifest.getLong("pdfBytes") && ink.length() == manifest.getLong("inkBytes")) { "백업 크기 정보가 다릅니다." }
             val pdfHash = hash(pdf, canceled)
             require(pdfHash == manifest.getString("pdfSha256") && hash(ink, canceled) == manifest.getString("inkSha256")) { "백업의 해시가 일치하지 않습니다." }
             checkJson(ink, INK_LIMIT, canceled)
             val restored = PdfInkStore(stage).load(id)
+            require(version == 1 || restored.name.endsWith(".pptx",true)) { "PPTX 필기 문서 이름이 잘못되었습니다." }
             ParcelFileDescriptor.open(pdf, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 PdfRenderer(descriptor).use {
                     require(it.pageCount == restored.pages) { "PDF 페이지 수와 필기 정보가 다릅니다." }
