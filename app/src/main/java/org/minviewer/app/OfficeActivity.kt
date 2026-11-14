@@ -62,7 +62,6 @@ class OfficeActivity : Activity() {
     private var slidePanelSelection: Int? = null
     private var restoreSlidePanel = false
     private var slidePanelAnimator: ValueAnimator? = null
-    private var slidePanelAnimating = false
     private var document: Document? = null
     private var temporaryFile: File? = null
     private var presentationSource: File? = null
@@ -99,6 +98,10 @@ class OfficeActivity : Activity() {
     private var wasScaling = false
     private var swipeAnimationTarget = -1
     private var swipeAnimationDirection = 0
+    private var swipeVelocity: android.view.VelocityTracker? = null
+    private var swipeDuration = 220L
+    private var turnPreview: ImageView? = null
+    private var slidePanelClosing = false
     private var touchInDocument = false
     private lateinit var scaleDetector: ScaleGestureDetector
     private val tapDetector by lazy {
@@ -243,42 +246,61 @@ class OfficeActivity : Activity() {
             setOnTouchListener { view, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        swipeVelocity?.recycle();swipeVelocity=android.view.VelocityTracker.obtain().apply{addMovement(event)}
+                        if(swipeAnimationTarget>=0)return@setOnTouchListener true
+                        image.animate().cancel()
+                        turnPreview?.let{it.animate().cancel();documentArea.overlay.remove(it)};turnPreview=null
                         touchX = event.rawX; touchY = event.rawY; wasScaling = false
                         pinchStartX = viewportX; pinchStartY = viewportY
                         view.parent.requestDisallowInterceptTouchEvent(true)
                         true
                     }
-                    MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true; view.parent.requestDisallowInterceptTouchEvent(true); true }
+                    MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true;view.translationX=0f;view.parent.requestDisallowInterceptTouchEvent(true);true }
                     MotionEvent.ACTION_MOVE -> {
+                        swipeVelocity?.addMovement(event)
+                        if(swipeAnimationTarget>=0)return@setOnTouchListener true
                         if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET)) {
                             panTo(pinchStartX - ((event.rawX - touchX) * tileWidth / view.width).toInt(),
                                 pinchStartY - ((event.rawY - touchY) * tileHeight / view.height).toInt())
+                        }else if(!wasScaling){
+                            val dx=event.rawX-touchX;val dy=event.rawY-touchY
+                            if(kotlin.math.abs(dx)>android.view.ViewConfiguration.get(this@OfficeActivity).scaledTouchSlop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.25f){
+                                val target=pageIndex+if(dx<0)1 else -1
+                                view.translationX=if(target in 0 until pageCount)dx else dx*.18f
+                            }
                         }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         val dx = event.rawX - touchX
                         val dy = event.rawY - touchY
+                        swipeVelocity?.addMovement(event);swipeVelocity?.computeCurrentVelocity(1000)
+                        val speed=swipeVelocity?.xVelocity?:0f
+                        swipeVelocity?.recycle();swipeVelocity=null
+                        if(swipeAnimationTarget>=0)return@setOnTouchListener true
                         val horizontalSwipe = kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
-                            kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f
+                            kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f &&
+                            (kotlin.math.abs(dx)>view.width*.18f||kotlin.math.abs(speed)>600*resources.displayMetrics.density&&speed*dx>0)
                         if (!wasScaling && documentType != Document.DOCTYPE_SPREADSHEET && zoom <= 1f && horizontalSwipe) {
                             val direction = if (dx < 0) 1 else -1
                             val target = pageIndex + direction
                             if (target in 0 until pageCount) {
                                 swipeAnimationTarget = target
                                 swipeAnimationDirection = direction
+                                swipeDuration=(((view.width-kotlin.math.abs(dx)).coerceAtLeast(0f)/maxOf(kotlin.math.abs(speed),view.width*4f))*1000).toLong().coerceIn(100,260)
                                 showPage(target)
-                            }
+                            }else view.animate().translationX(0f).setDuration(180).start()
                         } else if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET) && view.width > 0 && view.height > 0 && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) {
                             panTo(pinchStartX - (dx * tileWidth / view.width).toInt(), pinchStartY - (dy * tileHeight / view.height).toInt())
                         } else if (!wasScaling && kotlin.math.abs(dx) <= 10 && kotlin.math.abs(dy) <= 10) {
                             view.translationX = 0f
                             view.translationY = 0f
                             view.performClick()
-                        }
+                        }else if(!wasScaling)view.animate().translationX(0f).setDuration(180).start()
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
+                        swipeVelocity?.recycle();swipeVelocity=null
                         view.translationX = 0f
                         view.translationY = 0f
                         true
@@ -300,7 +322,7 @@ class OfficeActivity : Activity() {
                     image.layoutParams = android.widget.FrameLayout.LayoutParams(-1, height)
                     image.scaleType = ImageView.ScaleType.FIT_CENTER
                 }
-                if (changed && !slidePanelAnimating && pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
+                if (changed && pageCount > 0 && baseWidth > 0) showPage(pageIndex, viewportX, viewportY)
             }
         }
         documentArea = FrameLayout(this).apply {
@@ -659,7 +681,10 @@ class OfficeActivity : Activity() {
             try {
                 drawPage(index, x, y, requestedZoom, request)
             } catch (error: Exception) {
-                if (!closed) runOnUiThread { if (!closed && request == renderGeneration.get()) status.text = "LibreOffice 오류: ${error.message}" }
+                if (!closed) runOnUiThread { if (!closed && request == renderGeneration.get()) {
+                    if(index==swipeAnimationTarget){swipeAnimationTarget=-1;image.animate().translationX(0f).setDuration(180).start()}
+                    status.text = "LibreOffice 오류: ${error.message}"
+                } }
             } finally {
                 if (!closed) runOnUiThread {
                     panPending = false
@@ -743,21 +768,25 @@ class OfficeActivity : Activity() {
                     sheetWidth = if (sheet) width else rect[2]
                     sheetHeight = if (sheet) height else rect[3]
                 }
-                val preview = if (previousPage == index) capturePreview() else null
+                val turning=index==swipeAnimationTarget
+                val dragOffset=image.translationX
+                val preview = if (previousPage == index || turning) capturePreview() else null
                 image.setImageBitmap(bitmap)
                 image.scaleX = 1f
                 image.scaleY = 1f
                 image.translationX = 0f
                 image.translationY = 0f
-                preview?.animate()?.alpha(0f)?.setDuration(120)?.withEndAction { documentArea.overlay.remove(preview) }?.start()
+                if(!turning)preview?.animate()?.alpha(0f)?.setDuration(120)?.withEndAction { documentArea.overlay.remove(preview) }?.start()
                 sheetLeftHint.visibility = if (sheet && x > left) View.VISIBLE else View.GONE
                 sheetRightHint.visibility = if (sheet && x.toLong() + renderedWidth < right.toLong()) View.VISIBLE else View.GONE
                 if (index == swipeAnimationTarget) {
                     swipeAnimationTarget = -1
                     image.animate().cancel()
-                    image.translationX = swipeAnimationDirection * 36 * resources.displayMetrics.density
-                    image.alpha = 0.75f
-                    image.animate().translationX(0f).alpha(1f).setDuration(180).start()
+                    image.translationX = swipeAnimationDirection * viewport.width + dragOffset
+                    turnPreview=preview
+                    preview?.animate()?.translationX(-swipeAnimationDirection*viewport.width-dragOffset)?.setDuration(swipeDuration)
+                        ?.withEndAction{documentArea.overlay.remove(preview);if(turnPreview===preview)turnPreview=null}?.start()
+                    image.animate().translationX(0f).setDuration(swipeDuration).start()
                 }
                 pageLimit = when {
                     documentType == Document.DOCTYPE_SPREADSHEET -> " · 시험용: 끌어서 이동"
@@ -879,7 +908,13 @@ class OfficeActivity : Activity() {
     }
 
     private fun showSlideList() {
-        if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0 || slidePanelAnimating) return
+        if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0) return
+        if(slidePanelClosing){
+            val panel=slidePanelView?:return
+            slidePanelClosing=false
+            animateSlidePanel(panel,false){}
+            return
+        }
         closeSlidePanel?.let { it(); return }
         val ui=UiStyle(this)
         val wide = ui.useSidePanel()
@@ -991,18 +1026,20 @@ class OfficeActivity : Activity() {
         panel.addView(grid,LinearLayout.LayoutParams(-1,if(wide)0 else ui.dp((resources.configuration.screenHeightDp-240).coerceIn(120,280)),if(wide)1f else 0f))
         val closeList = {
             val target = if (panel.parent === contentRow) slidePanelSelection ?: pageIndex else selected
-            active.set(false)
+            slidePanelClosing=true
             val finishClose = {
+                active.set(false)
                 cache.evictAll()
                 if (panel.parent === contentRow) contentRow.removeView(panel)
                 slidePanelGrid = null
                 slidePanelView = null
                 closeSlidePanel = null
                 slidePanelSelection = null
+                slidePanelClosing=false
                 if (!closed&&target!=pageIndex)showPage(target)
             }
             if (!closed && panel.parent === contentRow) {
-                animateSlidePanel(panel, grid.width, 0, finishClose)
+                animateSlidePanel(panel,true,finishClose)
             } else {
                 finishClose()
             }
@@ -1013,9 +1050,10 @@ class OfficeActivity : Activity() {
             slidePanelView = panel
             slidePanelSelection = pageIndex
             val width = (240 * resources.displayMetrics.density).toInt()
-            contentRow.addView(panel, FrameLayout.LayoutParams(0,-1,Gravity.START))
+            contentRow.addView(panel, FrameLayout.LayoutParams(width,-1,Gravity.START))
+            panel.translationX=-width.toFloat()
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; showPage(position); grid.invalidateViews() }
-            animateSlidePanel(panel, 0, width) {}
+            animateSlidePanel(panel,false) {}
         } else {
             val dialog = AlertDialog.Builder(this).setTitle("슬라이드 목록").setView(panel).setNegativeButton("닫기", null).create()
             grid.setOnItemClickListener { _, _, position, _ -> selected = position; dialog.dismiss() }
@@ -1027,22 +1065,25 @@ class OfficeActivity : Activity() {
         }
     }
 
-    private fun animateSlidePanel(grid: View, from: Int, to: Int, finished: () -> Unit) {
-        slidePanelAnimating = true
-        slidePanelAnimator = ValueAnimator.ofInt(from, to).apply {
+    private fun animateSlidePanel(grid: View, closing:Boolean, finished: () -> Unit) {
+        slidePanelAnimator?.removeAllListeners()
+        slidePanelAnimator?.cancel()
+        val start=grid.translationX
+        val end=if(closing)-grid.layoutParams.width.toFloat() else 0f
+        val animator = ValueAnimator.ofFloat(start,end).apply {
             duration = 220
             addUpdateListener { animator ->
-                grid.layoutParams = grid.layoutParams.apply { width = animator.animatedValue as Int }
+                grid.translationX = animator.animatedValue as Float
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    slidePanelAnimating = false
                     slidePanelAnimator = null
                     finished()
                 }
             })
-            start()
         }
+        slidePanelAnimator=animator
+        animator.start()
     }
 
     private fun showSheetList() {
@@ -1253,6 +1294,8 @@ class OfficeActivity : Activity() {
 
     override fun onDestroy() {
         closed = true
+        swipeVelocity?.recycle();swipeVelocity=null
+        turnPreview?.let{it.animate().cancel();documentArea.overlay.remove(it)};turnPreview=null
         synchronized(this) { passwordLatch?.countDown() }
         renderGeneration.incrementAndGet()
         slidePanelAnimator?.cancel()

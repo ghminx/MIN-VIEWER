@@ -24,8 +24,127 @@ let hwpSearchState;
 let hwpHighlights = [];
 let hwpLayoutGeneration = 0;
 let previewRequested = false;
+let hwpCover = false;
+let hwpViewportSnapshot = [];
+let hwpDragOffset = 0;
+let hwpMotionGeneration = 0;
+let hwpAnimations = [];
+
+function cancelHwpAnimations() {
+    hwpMotionGeneration++;
+    hwpAnimations.forEach(animation => animation.cancel());
+    hwpAnimations = [];
+}
+
+function fillHwpSlot(slot) {
+    if (slot.firstChild) return;
+    const frame = hwpFrame(Number(slot.dataset.page));
+    Object.assign(frame.style, {height: '100%', position: 'absolute', inset: '0', pointerEvents: 'none'});
+    slot.appendChild(frame);
+}
+
+function showHwpRow(index) {
+    const row = page.children[index]?.dataset.row;
+    for (const slot of page.children) {
+        slot.style.transform = '';
+        if (hwpPaged) {
+            slot.style.display = slot.dataset.row === row ? '' : 'none';
+            slot.style.willChange = slot.dataset.row === row ? 'transform' : '';
+            slot.style.gridRow = '1';
+            if (Math.abs(Number(slot.dataset.row) - Number(row)) > 1) slot.replaceChildren();
+        }
+    }
+    if (hwpPaged) {
+        for (const slot of page.children) if (slot.dataset.row === row) fillHwpSlot(slot);
+        const generation = hwpLayoutGeneration;
+        for (const slot of page.children) if (Math.abs(Number(slot.dataset.row) - Number(row)) === 1) {
+            window.requestIdleCallback(() => {
+                if (generation === hwpLayoutGeneration && documentHandle &&
+                    Math.abs(Number(slot.dataset.row) - Number(page.children[hwpCurrentPage]?.dataset.row)) <= 1) {
+                    try { fillHwpSlot(slot); }
+                    catch (error) { status.textContent = `페이지 표시 실패: ${error.message}`; }
+                }
+            });
+        }
+        window.scrollTo(0, 0);
+    } else page.children[index]?.scrollIntoView({block: 'start'});
+}
+
+window.beginHwpViewportChange = () => {
+    hwpTrackScroll = false;
+    hwpViewportSnapshot = Array.from(page.children).filter(slot => slot.style.display !== 'none')
+        .map(slot => ({index: slot.dataset.page, rect: slot.getBoundingClientRect()}));
+    cancelHwpAnimations();
+};
+
+window.resizeHwpPages = (index = hwpCurrentPage, originX = 0, originY = 0, animate = false) => {
+    if (!documentHandle || !page.children.length) return;
+    const columns = hwpMode === 'spread' ? 2 : 1;
+    const availableWidth = page.clientWidth;
+    const height = Math.max(1, window.innerHeight - 24);
+    page.style.minHeight = hwpPaged ? `${height}px` : '';
+    for (const slot of page.children) {
+        const cover = columns === 2 && hwpCover && slot.dataset.page === '0';
+        const columnWidth = (availableWidth - (columns - 1) * 6) / (cover ? 1 : columns);
+        const ratio = Number(slot.dataset.width) / Number(slot.dataset.height);
+        const width = Math.min(columnWidth, height * ratio);
+        slot.style.width = `${width}px`; slot.style.height = `${width / ratio}px`;
+    }
+    hwpCurrentPage = index;
+    if (hwpPaged) showHwpRow(index);
+    else {
+        const anchor = hwpViewportSnapshot.find(saved => Number(saved.index) === index);
+        if (anchor) window.scrollBy(0, page.children[index].getBoundingClientRect().top - anchor.rect.top - originY);
+    }
+    if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        for (const saved of hwpViewportSnapshot) {
+            const slot = page.children[Number(saved.index)];
+            if (!slot || slot.style.display === 'none') continue;
+            const rect = slot.getBoundingClientRect();
+            if (!rect.width || !saved.rect.width) continue;
+            hwpAnimations.push(slot.animate([
+                {transform: `translate(${saved.rect.left + originX - rect.left}px,${saved.rect.top + originY - rect.top}px) scale(${saved.rect.width / rect.width})`, transformOrigin: '0 0'},
+                {transform: 'none', transformOrigin: '0 0'},
+            ], {duration: 280, easing: 'ease-out'}));
+        }
+    }
+    hwpViewportSnapshot = [];
+};
+
+window.dragHwpPage = dx => {
+    if (!hwpPaged || !documentHandle) return;
+    cancelHwpAnimations();
+    const row = Number(page.children[hwpCurrentPage]?.dataset.row);
+    const direction = dx < 0 ? 1 : -1;
+    const target = row + direction;
+    const valid = Array.from(page.children).some(slot => Number(slot.dataset.row) === target);
+    hwpDragOffset = valid ? dx : dx * .18;
+    for (const slot of page.children) {
+        const slotRow = Number(slot.dataset.row);
+        slot.style.display = slotRow === row || valid && slotRow === target ? '' : 'none';
+        slot.style.gridRow = '1';
+        if (slotRow === row || valid && slotRow === target) {
+            slot.style.willChange = 'transform';
+            fillHwpSlot(slot);
+            slot.style.transform = `translateX(${hwpDragOffset + (slotRow === row ? 0 : direction * window.innerWidth)}px)`;
+        }
+    }
+};
+
+window.cancelHwpPageDrag = () => {
+    const row = page.children[hwpCurrentPage]?.dataset.row;
+    cancelHwpAnimations();
+    for (const slot of page.children) if (slot.style.display !== 'none') {
+        const from = slot.style.transform;
+        const target = slot.dataset.row === row ? 0 : (hwpDragOffset < 0 ? 1 : -1) * window.innerWidth;
+        hwpAnimations.push(slot.animate([{transform: from}, {transform: `translateX(${target}px)`}], {duration: 180, easing: 'ease-out'}));
+    }
+    hwpDragOffset = 0;
+    showHwpRow(hwpCurrentPage);
+};
 
 window.resetDocument = () => {
+    cancelHwpAnimations();hwpDragOffset=0;hwpViewportSnapshot=[];
     previewRequested = false;
     sequence++;
     hwpLayoutGeneration++;
@@ -41,6 +160,7 @@ window.resetDocument = () => {
     page.style.background = '';
     page.style.minHeight = '';
     page.style.alignItems = '';
+    page.style.overflow = '';
     pendingFetch?.abort();
     pendingFetch = undefined;
     if (documentHandle) documentHandle.free();
@@ -142,6 +262,7 @@ function hwpFrame(index) {
 }
 
 window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
+    cancelHwpAnimations();hwpDragOffset=0;hwpCover=cover;
     hwpPaged = paged;
     hwpTrackScroll = false;
     if (!documentHandle || !['continuous', 'single', 'spread'].includes(mode)) return;
@@ -155,17 +276,15 @@ window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
     page.style.background = '';
     page.style.minHeight = '';
     page.style.alignItems = '';
-    if (mode === 'single') {
-        window.showPage(index);
-        return;
-    }
     try {
         page.replaceChildren();
-        page.style.display = mode === 'spread' ? 'grid' : 'block';
-        page.style.gridTemplateColumns = mode === 'spread' ? 'repeat(2,minmax(0,1fr))' : '';
+        page.style.display = mode === 'continuous' ? 'block' : 'grid';
+        page.style.gridTemplateColumns = mode === 'spread' ? 'repeat(2,minmax(0,1fr))' : 'minmax(0,1fr)';
         page.style.gap = mode === 'spread' ? '8px 6px' : '8px';
         page.style.justifyItems = 'center';
         page.style.background = 'transparent';
+        page.style.overflow = paged ? 'hidden' : '';
+        page.style.minHeight = paged ? 'calc(100vh - 24px)' : '';
         page.style.gridAutoRows = `${Math.max(1,window.innerHeight - 24)}px`;
         const slots = views.map((_, pageIndex) => {
             const info = JSON.parse(documentHandle.getPageInfo(pageIndex));
@@ -181,6 +300,7 @@ window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
             slot.style.alignSelf = 'center';
             slot.style.background = 'white';
             slot.style.position = 'relative';
+            if (mode === 'single') slot.style.gridColumn = '1';
             if (mode === 'continuous') slot.style.margin = '0 auto 8px';
             if (mode === 'spread') {
                 slot.style.justifySelf = isCover ? 'center' : ((pageIndex - (cover ? 1 : 0)) % 2 === 0 ? 'end' : 'start');
@@ -188,6 +308,7 @@ window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
                 slot.style.gridRow = String((cover ? Math.floor((pageIndex + 1) / 2) : Math.floor(pageIndex / 2)) + 1);
             }
             slot.dataset.page = String(pageIndex);
+            slot.dataset.width = String(info.width); slot.dataset.height = String(info.height);
             slot.dataset.row = String(mode === 'spread' ? (cover ? Math.floor((pageIndex + 1) / 2) : Math.floor(pageIndex / 2)) : pageIndex);
             page.appendChild(slot);
             return slot;
@@ -195,6 +316,7 @@ window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
         const generation = activeGeneration;
         hwpObserver = new IntersectionObserver(entries => {
             if (layoutGeneration !== hwpLayoutGeneration || generation !== activeGeneration || !documentHandle) return;
+            if (hwpPaged) return;
             for (const entry of entries) {
                 const slot = entry.target;
                 if (entry.isIntersecting && !slot.firstChild) {
@@ -265,7 +387,6 @@ function hwpMatchResult(match, number, total, canNext) {
 function setHwpHighlights(rects) {
     const affected = new Set([...hwpHighlights, ...rects].map(rect => rect.pageIndex));
     hwpHighlights = rects;
-    if (hwpMode === 'single') return;
     for (const index of affected) {
         const slot = page.children[index];
         if (!slot?.firstChild) continue;
@@ -313,7 +434,7 @@ window.showHwpSearchResult = index => {
     const layoutGeneration = hwpLayoutGeneration;
     requestAnimationFrame(() => {
         if (generation !== activeGeneration || layoutGeneration !== hwpLayoutGeneration || hwpCurrentPage !== index) return;
-        const container = hwpMode === 'single' ? page : page.children[index];
+        const container = page.children[index];
         if (!container) return;
         const info = JSON.parse(documentHandle.getPageInfo(index));
         const bounds = container.getBoundingClientRect();
@@ -372,38 +493,30 @@ window.openDocument = async (url, name, generation, password = null) => {
     }
 };
 
-window.showPage = index => {
+window.showPage = (index, animate = false, duration = 220) => {
     if (!documentHandle || index < 0 || index >= views.length) return;
+    const previous = hwpCurrentPage;
     hwpCurrentPage = index;
     try {
-        if (hwpMode !== 'single') {
-            if (hwpPaged) {
-                const row = page.children[index]?.dataset.row;
-                for (const slot of page.children) {
-                    slot.style.display = slot.dataset.row === row ? '' : 'none';
-                    slot.style.gridRow = '1';
-                }
-                window.scrollTo(0,0);
-            } else page.children[index]?.scrollIntoView({block: 'start'});
-            window.Android.onPageShown(index, activeGeneration);
-            return;
-        }
-        const frame = hwpFrame(index);
-        const info = JSON.parse(documentHandle.getPageInfo(index));
-        status.textContent = '';
-        if (info.width > 0 && info.height > 0) {
-            const availableHeight = Math.max(1, window.innerHeight - 24);
-            const width = Math.min(page.clientWidth, availableHeight * info.width / info.height);
-            frame.style.width = `${width}px`;
-            frame.style.height = `${Math.ceil(width * info.height / info.width)}px`;
-            frame.style.margin = 'auto';
-        }
-        page.style.display = 'flex';
-        page.style.alignItems = 'center';
-        page.style.minHeight = 'calc(100vh - 24px)';
-        page.style.background = 'transparent';
-        page.replaceChildren(frame);
-        status.textContent = '';
+        const oldRow = page.children[previous]?.dataset.row;
+        const nextRow = page.children[index]?.dataset.row;
+        if (animate && hwpPaged && oldRow !== nextRow && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            cancelHwpAnimations();
+            const motion = hwpMotionGeneration;
+            const direction = Number(nextRow) > Number(oldRow) ? 1 : -1;
+            const offset = hwpDragOffset;
+            const slots = Array.from(page.children).filter(slot => slot.dataset.row === oldRow || slot.dataset.row === nextRow);
+            let remaining = slots.length;
+            for (const slot of slots) {
+                slot.style.display = ''; slot.style.gridRow = '1'; fillHwpSlot(slot);
+                const incoming = slot.dataset.row === nextRow;
+                const from = offset + (incoming ? direction * window.innerWidth : 0);
+                const to = incoming ? 0 : -direction * window.innerWidth;
+                const animation = slot.animate([{transform: `translateX(${from}px)`}, {transform: `translateX(${to}px)`}], {duration, easing: 'ease-out'});
+                animation.onfinish = () => { if (motion === hwpMotionGeneration && --remaining === 0) {showHwpRow(index);hwpDragOffset=0;} };
+                hwpAnimations.push(animation);
+            }
+        } else {cancelHwpAnimations();hwpDragOffset=0;showHwpRow(index);}
         window.Android.onPageShown(index, activeGeneration);
     } catch (error) { status.textContent = `페이지 표시 실패: ${error.message}`; }
 };

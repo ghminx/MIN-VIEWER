@@ -20,6 +20,19 @@ class InkSelection(val indices: Set<Int>, val documentStrokes: List<InkStroke>) 
         })
     }
 
+    /** 실제 문서 크기 비율을 적용하고 대상 페이지 내부로 선택 전체 이동. */
+    fun transferred(targetPage:Int,centerX:Float,centerY:Float,ratioX:Float,ratioY:Float,widthRatio:Float):InkSelection? {
+        val width=bounds.width()*ratioX;val height=bounds.height()*ratioY
+        if(width>1f||height>1f)return null
+        val x=centerX.coerceIn(width/2,1f-width/2)
+        val y=centerY.coerceIn(height/2,1f-height/2)
+        return InkSelection(indices,documentStrokes.mapIndexed {i,stroke->
+            if(i !in indices)stroke else stroke.copy(page=targetPage,width=stroke.width*widthRatio,points=stroke.points.map {
+                it.copy(x=(x+(it.x-bounds.centerX())*ratioX).coerceIn(0f,1f),y=(y+(it.y-bounds.centerY())*ratioY).coerceIn(0f,1f))
+            })
+        })
+    }
+
     fun resized(factor: Float): InkSelection {
         val cx = bounds.centerX(); val cy = bounds.centerY()
         val limitX = if (bounds.width() == 0f) Float.MAX_VALUE else 2 * minOf(cx, 1 - cx) / bounds.width()

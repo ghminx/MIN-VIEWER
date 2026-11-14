@@ -57,6 +57,7 @@ public class InkGesture {
             MotionEvent e=MotionEvent.obtain(down,SystemClock.uptimeMillis(),i==0?MotionEvent.ACTION_DOWN:MotionEvent.ACTION_MOVE,1,new MotionEvent.PointerProperties[]{p},new MotionEvent.PointerCoords[]{c},0,held?MotionEvent.BUTTON_STYLUS_PRIMARY:0,1,1,0,0,p.toolType==MotionEvent.TOOL_TYPE_STYLUS?InputDevice.SOURCE_STYLUS:InputDevice.SOURCE_TOUCHSCREEN,0);
             if(!(Boolean)inject.invoke(manager,e,2))throw new IllegalStateException("입력 실패");e.recycle();SystemClock.sleep(20);
         }
+        if(args.length>6){System.out.println("GESTURE_HELD");SystemClock.sleep(Long.parseLong(args[6]));}
         MotionEvent e=MotionEvent.obtain(down,SystemClock.uptimeMillis(),cancel?MotionEvent.ACTION_CANCEL:MotionEvent.ACTION_UP,1,new MotionEvent.PointerProperties[]{p},new MotionEvent.PointerCoords[]{c},0,0,1,1,0,0,p.toolType==MotionEvent.TOOL_TYPE_STYLUS?InputDevice.SOURCE_STYLUS:InputDevice.SOURCE_TOUCHSCREEN,0);
         if(!(Boolean)inject.invoke(manager,e,2))throw new IllegalStateException("입력 종료 실패");e.recycle();
     }

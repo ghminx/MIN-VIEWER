@@ -40,7 +40,7 @@ public class PinchGesture {
             SystemClock.sleep(25);
             send(inject, manager, down, MotionEvent.ACTION_MOVE, 2, properties, coords);
         }
-        if (args.length > 4) SystemClock.sleep(Long.parseLong(args[4]));
+        if (args.length > 4) {System.out.println("GESTURE_HELD");SystemClock.sleep(Long.parseLong(args[4]));}
         send(inject, manager, down, MotionEvent.ACTION_POINTER_UP | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, properties, coords);
         if (args.length > 7) {
             for (int i = 0; i < 4; i++) {

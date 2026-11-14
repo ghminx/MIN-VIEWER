@@ -35,7 +35,7 @@ class MainActivity : Activity() {
     private lateinit var home: HomeScreen
     private lateinit var recent: RecentDocuments
     private var openingRecent = false
-    private lateinit var content: LinearLayout
+    private lateinit var content: FrameLayout
     private lateinit var listPanel: LinearLayout
     private lateinit var list: ListView
     private var browser: WebView? = null
@@ -73,6 +73,10 @@ class MainActivity : Activity() {
     private var swipeY = 0f
     private var swipeDocument = false
     private var swipeMultiTouch = false
+    private var hwpDragging = false
+    private var hwpVelocity: android.view.VelocityTracker? = null
+    private var panelGeneration = 0
+    private var panelChanging = false
     private val tapDetector by lazy {
         android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
             override fun onSingleTapConfirmed(event:MotionEvent):Boolean {
@@ -172,7 +176,7 @@ class MainActivity : Activity() {
         indicator = viewerControls.status
         viewerControls.setLocationAction {viewerControls.showPageJump(pageIndex,pageCount)}
         container.addView(viewerControls)
-        content = LinearLayout(this)
+        content = FrameLayout(this)
         list = ListView(this).apply {
             setOnItemClickListener { _, _, position, _ ->
                 pageIndex = position
@@ -180,11 +184,11 @@ class MainActivity : Activity() {
                 if (!UiStyle(this@MainActivity).useSidePanel()) { listVisible = false; updateLayout() }
             }
         }
-        listPanel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;visibility=View.GONE;addView(list,LinearLayout.LayoutParams(-1,0,1f))}
+        listPanel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;visibility=View.GONE;setBackgroundColor(UiStyle(this@MainActivity).background);addView(list,LinearLayout.LayoutParams(-1,0,1f))}
         viewerControls.setListNavigation {listVisible=true;updateLayout()}
         content.addView(listPanel)
         emptyMessage = TextView(this).apply { text = "파일을 선택해 주세요."; setPadding(24, 24, 24, 24) }
-        content.addView(emptyMessage, LinearLayout.LayoutParams(0, -1, 1f))
+        content.addView(emptyMessage, FrameLayout.LayoutParams(-1, -1))
         container.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         home = HomeScreen(this, recent, { pickDocument() }, { noteId -> startActivityForResult(Intent(this, PdfNotesActivity::class.java).putExtra("note_id",noteId), 4) }) { item ->
             openingRecent = true
@@ -305,18 +309,21 @@ class MainActivity : Activity() {
             }
             addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
                 if ((right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) &&
-                    ready && pageCount > 0) {
-                    post { if (generation == browserGeneration && !isDestroyed) {resetHwpZoom();applyHwpViewing()} }
+                    ready && pageCount > 0 && !panelChanging) {
+                    post { if (generation == browserGeneration && !isDestroyed && !panelChanging) {resetHwpZoom();applyHwpViewing()} }
                 }
             }
         }
         emptyMessage.visibility = View.GONE
-        browser?.let { content.addView(it) }
+        browser?.let { content.addView(it,0,FrameLayout.LayoutParams(-1,-1)) }
         updateLayout()
         browser?.loadUrl("https://appassets.androidplatform.net/index.html")
     }
 
     private fun releaseBrowser() {
+        panelGeneration++
+        panelChanging=false
+        hwpVelocity?.recycle();hwpVelocity=null
         pendingWebDocument = false
         ready = false
         browserGeneration++
@@ -335,26 +342,53 @@ class MainActivity : Activity() {
                 swipeX = event.rawX
                 swipeY = event.rawY
                 swipeMultiTouch = false
+                hwpDragging = false
+                hwpVelocity?.recycle()
+                hwpVelocity = android.view.VelocityTracker.obtain()
                 val view = browser
                 val location = IntArray(2)
                 view?.getLocationOnScreen(location)
-                swipeDocument = view != null && view.visibility == View.VISIBLE &&
+                swipeDocument = !(listVisible && !UiStyle(this).useSidePanel()) && view != null && view.visibility == View.VISIBLE &&
                     swipeX >= location[0] && swipeX < location[0] + view.width &&
                     swipeY >= location[1] && swipeY < location[1] + view.height
             }
-            MotionEvent.ACTION_POINTER_DOWN -> swipeMultiTouch = true
-            MotionEvent.ACTION_UP -> {
-                val dx = event.rawX - swipeX
-                val dy = event.rawY - swipeY
-                if (swipeDocument && !swipeMultiTouch && !hwpViewing.scrolling && hwpZoom <= 1.01f &&
-                    kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
-                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
-                    super.dispatchTouchEvent(event)
-                    movePage(if (dx < 0) 1 else -1)
-                    return true
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                swipeMultiTouch = true
+                if(hwpDragging)browser?.evaluateJavascript("window.cancelHwpPageDrag()",null)
+                hwpDragging=false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx=event.rawX-swipeX;val dy=event.rawY-swipeY
+                if(swipeDocument&&!swipeMultiTouch&&!hwpViewing.scrolling&&hwpZoom<=1.01f&&
+                    event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER&&
+                    (hwpDragging||kotlin.math.abs(dx)>android.view.ViewConfiguration.get(this).scaledTouchSlop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.25f)) {
+                    if(!hwpDragging){
+                        val cancel=MotionEvent.obtain(event);cancel.action=MotionEvent.ACTION_CANCEL
+                        super.dispatchTouchEvent(cancel);tapDetector.onTouchEvent(cancel);cancel.recycle()
+                    }
+                    hwpDragging=true
+                    browser?.evaluateJavascript("window.dragHwpPage(${dx/resources.displayMetrics.density})",null)
                 }
             }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.rawX - swipeX
+                if(hwpDragging){
+                    hwpVelocity?.addMovement(event);hwpVelocity?.computeCurrentVelocity(1000)
+                    val speed=hwpVelocity?.xVelocity?:0f
+                    val commit=kotlin.math.abs(dx)>((browser?.width?:1)*.18f)||
+                        kotlin.math.abs(dx)>48*resources.displayMetrics.density&&kotlin.math.abs(speed)>600*resources.displayMetrics.density&&speed*dx>0
+                    val width=(browser?.width?:1).toFloat()
+                    val duration=(((width-kotlin.math.abs(dx)).coerceAtLeast(0f)/maxOf(kotlin.math.abs(speed),width*4f))*1000).toLong().coerceIn(100,260)
+                    if(commit)movePage(if(dx<0)1 else -1,duration)else browser?.evaluateJavascript("window.cancelHwpPageDrag()",null)
+                    hwpDragging=false;hwpVelocity?.recycle();hwpVelocity=null
+                    return true
+                }
+                hwpVelocity?.recycle();hwpVelocity=null
+            }
+            MotionEvent.ACTION_CANCEL -> {if(hwpDragging)browser?.evaluateJavascript("window.cancelHwpPageDrag()",null);hwpDragging=false;hwpVelocity?.recycle();hwpVelocity=null}
         }
+        hwpVelocity?.addMovement(event)
+        if(hwpDragging)return true
         if(swipeDocument&&event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER)tapDetector.onTouchEvent(event)
         return super.dispatchTouchEvent(event)
     }
@@ -363,16 +397,46 @@ class MainActivity : Activity() {
 
     private fun updateLayout() {
         val wide = UiStyle(this).useSidePanel()
-        content.orientation = LinearLayout.HORIZONTAL
         if(listVisible&&listPanel.visibility!=View.VISIBLE)viewerControls.attachListNavigation(listPanel,pageIndex,pageCount){showPage(it)}
-        listPanel.visibility = if (listVisible) View.VISIBLE else View.GONE
-        val listWidth = (if (wide) 200f else windowWidthDp().toFloat()) * resources.displayMetrics.density
-        listPanel.layoutParams = LinearLayout.LayoutParams(listWidth.toInt(), -1)
-        browser?.let { view ->
-            view.visibility = if (listVisible && !wide) View.GONE else View.VISIBLE
-            view.layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
-            if (view.visibility == View.VISIBLE && pageCount > 0) view.post { showPage(pageIndex) }
+        val width=((if(wide)200f else windowWidthDp().toFloat())*resources.displayMetrics.density).toInt()
+        val wasVisible=listPanel.visibility==View.VISIBLE
+        listPanel.animate().cancel()
+        listPanel.layoutParams=FrameLayout.LayoutParams(width,-1)
+        if(listVisible){if(!wasVisible)listPanel.translationX=-width.toFloat();listPanel.visibility=View.VISIBLE}
+        val generation=++panelGeneration
+        val view=browser
+        val oldLocation=IntArray(2);view?.getLocationOnScreen(oldLocation)
+        val applyLayout={
+            if(generation==panelGeneration){
+                panelChanging=true
+                view?.layoutParams=FrameLayout.LayoutParams(-1,-1).apply{leftMargin=if(wide&&listVisible)width else 0}
+                listPanel.animate().translationX(if(listVisible)0f else -width.toFloat()).setDuration(280)
+                    .withEndAction{if(generation==panelGeneration&&!listVisible)listPanel.visibility=View.GONE}.start()
+                if(view!=null&&ready&&pageCount>0){
+                    val observer=object:android.view.ViewTreeObserver.OnPreDrawListener {
+                        var dispatched=false
+                        var complete=false
+                        override fun onPreDraw():Boolean {
+                            if(generation!=panelGeneration||browser!==view){view.viewTreeObserver.removeOnPreDrawListener(this);return true}
+                            if(complete){view.viewTreeObserver.removeOnPreDrawListener(this);panelChanging=false;return true}
+                            if(!dispatched){
+                                dispatched=true
+                                val next=IntArray(2);view.getLocationOnScreen(next)
+                                val scale=resources.displayMetrics.density*hwpZoom
+                                view.evaluateJavascript("window.resizeHwpPages($pageIndex,${(oldLocation[0]-next[0])/scale},${(oldLocation[1]-next[1])/scale},true)") {
+                                    complete=true;view.invalidate()
+                                }
+                            }
+                            return false
+                        }
+                    }
+                    view.viewTreeObserver.addOnPreDrawListener(observer)
+                    view.requestLayout()
+                }else panelChanging=false
+            }
         }
+        if(view!=null&&ready&&pageCount>0)view.evaluateJavascript("window.beginHwpViewportChange()"){applyLayout()}
+        else applyLayout()
     }
 
     private fun pickDocument() {
@@ -562,17 +626,18 @@ class MainActivity : Activity() {
             .setPositiveButton("다시 선택") { _, _ -> showHome(); pickDocument() }.show()
     }
 
-    private fun showPage(index: Int) {
+    private fun showPage(index: Int, animate: Boolean = false, duration:Long = 220) {
         if (index !in 0 until pageCount) return
         // 키보드·창 크기 변경 시 렌더 완료 전에도 요청 페이지 유지
         pageIndex = index
-        browser?.evaluateJavascript("window.showPage($index)", null)
+        browser?.evaluateJavascript("window.showPage($index,$animate,$duration)", null)
     }
 
-    private fun movePage(direction: Int) {
+    private fun movePage(direction: Int, duration:Long = 220) {
         val columns=hwpColumns()
         val row=hwpViewing.row(pageIndex,columns)+direction
-        if(row in 0 until hwpViewing.rows(pageCount,columns))showPage(hwpViewing.first(row,columns))
+        if(row in 0 until hwpViewing.rows(pageCount,columns))showPage(hwpViewing.first(row,columns),true,duration)
+        else browser?.evaluateJavascript("window.cancelHwpPageDrag()",null)
     }
 
     private fun beginHwpInk() {

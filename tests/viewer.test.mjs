@@ -13,7 +13,7 @@ function setup({ failPageCount = false, pendingFetch = false, pendingBody = fals
     const events = [];
     const fetchedUrls = [];
     let clearCount = 0;
-    const page = { clientWidth: 320, style: {}, replaceChildren() { clearCount++; } };
+    const page = { clientWidth: 320, children: [], style: {}, replaceChildren() { clearCount++; } };
     const status = { textContent: '' };
     let freeCount = 0;
     let markPendingStarted;

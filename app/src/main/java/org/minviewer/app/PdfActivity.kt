@@ -157,6 +157,9 @@ class PdfActivity : Activity() {
     private var inkChromeExpanded = false
     private var inkChromeAnimating = false
     private var thumbnailAnimator: android.animation.ValueAnimator? = null
+    private var thumbnailExpanded = false
+    private var documentLayoutPending = false
+    private var documentMotionGeneration = 0
     private var touchOnOverlay = false
     private lateinit var inkRetry: Button
     private var penColor = Color.RED
@@ -173,17 +176,36 @@ class PdfActivity : Activity() {
     private val erasedStrokes = mutableSetOf<Int>()
     private var inkDirty = false
     private data class InkSession(val note: PdfInkNote, val undo: List<List<InkStroke>>, val redo: List<List<InkStroke>>, val dirty: Boolean)
-    private data class ViewerSession(val ink: InkSession?, val wordSnapshot: WordSnapshot?)
+    private data class InkClipboard(val strokes:List<InkStroke>,val width:Int,val height:Int)
+    private data class ViewerSession(val ink: InkSession?, val wordSnapshot: WordSnapshot?,val clipboard:InkClipboard?)
     private var retainedInkSession: InkSession? = null
     private var inkSelection: InkSelection? = null
-    private var selectionPreview: InkSelection? = null
     private var movingSelection = false
+    private val pageDimensions=java.util.concurrent.ConcurrentHashMap<Int,Pair<Int,Int>>()
+    private var selectionDragOverlay:android.graphics.drawable.Drawable?=null
+    private var selectionDragBase:List<InkStroke>?=null
+    private var selectionDragX=0f
+    private var selectionDragY=0f
+    private var selectionDragDx=0f
+    private var selectionDragDy=0f
+    private var inkClipboard:InkClipboard?=null
+    private var inkContextMenu:android.widget.PopupWindow?=null
+    private var lassoHold:Runnable?=null
+    private var contextConsumed=false
+    private var fingerSelectionDrag=false
+    private var contextX=0f
+    private var contextY=0f
+    private var pageDrag = false
+    private var pageTurnView: View? = null
+    private var pageTurnTarget = -1
+    private var pageTurnAnimator: android.animation.ValueAnimator? = null
+    private var pageVelocity: android.view.VelocityTracker? = null
 
     private fun clearInkSelection() {
-        if (inkSelection == null && selectionPreview == null) return
+        if (inkSelection == null && !movingSelection) return
         inkSelection = null
-        selectionPreview = null
         movingSelection = false
+        selectionDragOverlay?.let(contentRow.overlay::remove);selectionDragOverlay=null;selectionDragBase=null
         if (!inkDirty) inkStatus.text = ""
         invalidateInk()
     }
@@ -237,7 +259,7 @@ class PdfActivity : Activity() {
         inkButtons["굵기"]?.isEnabled = inkTool == "pen" || inkTool == "highlighter"
         inkButtons["색상"]?.setTextColor(if(inkTool=="highlighter")highlighterColor else penColor)
         for ((name, button) in inkButtons) {
-            val selectionAction = name in listOf("복사", "선택 삭제", "크기 조절", "선택 해제")
+            val selectionAction = name in listOf("복제", "선택 삭제", "크기 조절", "선택 해제")
             val historyAction = name in listOf("실행 취소", "다시 실행")
             val fits = !compactInkTools || name !in listOf("색상", "굵기", "다시 실행")
             button.visibility = if (fits && (historyAction || selectionAction == (inkSelection != null))) View.VISIBLE else View.GONE
@@ -274,7 +296,7 @@ class PdfActivity : Activity() {
     private fun eraseInk(image: ImageView, from: InkPoint, to: InkPoint) {
         val drawable = image.drawable ?: return
         val page = image.getTag(R.id.pdf_page_index) as Int
-        val radius = 12 * resources.displayMetrics.density / image.imageMatrix.mapRadius(1f)
+        val radius = 12 * resources.displayMetrics.density * drawable.intrinsicWidth / (pageScreenBounds(image)?.width()?:return)
         requireNotNull(inkGestureStrokes).forEachIndexed { index, stroke ->
             if (stroke.page == page && index !in erasedStrokes && InkHitTest.hits(stroke, from, to,
                     drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat(), radius)) erasedStrokes.add(index)
@@ -347,7 +369,7 @@ class PdfActivity : Activity() {
             "지우개" to {setInkTool("eraser")},"올가미" to {setInkTool("lasso")},
             "색상" to {showInkSettings()},"굵기" to {showInkSettings()},
             "실행 취소" to {changeInkHistory(false)},"다시 실행" to {changeInkHistory(true)},
-            "복사" to {copySelectedInk()},"선택 삭제" to {deleteSelectedInk()},"크기 조절" to {resizeSelectedInk()},"선택 해제" to {clearInkSelection()})
+            "복제" to {copySelectedInk()},"선택 삭제" to {deleteSelectedInk()},"크기 조절" to {resizeSelectedInk()},"선택 해제" to {clearInkSelection()})
         actions.forEach{(label,action)->
             if(label=="실행 취소")row.addView(View(this).apply {setBackgroundColor(ui.line);importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO},LinearLayout.LayoutParams(ui.dp(1),ui.dp(24)).apply {setMargins(ui.dp(8),0,ui.dp(8),0)})
             row.addView(ui.button(label,label){action();invalidateInk()}.apply{inkButtons[label]=this},LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)))
@@ -440,6 +462,7 @@ class PdfActivity : Activity() {
         super.onCreate(savedInstanceState)
         // 비동기 문서 로딩 전에 구성 변경 상태 확보
         retainedInkSession = (lastNonConfigurationInstance as? ViewerSession)?.ink
+        inkClipboard=(lastNonConfigurationInstance as? ViewerSession)?.clipboard
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
@@ -492,7 +515,7 @@ class PdfActivity : Activity() {
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                if (mode == 1 && !viewing.scrolling) {
+                if (!viewing.scrolling) {
                     setPageZoom(zoom * kotlin.math.sqrt(detector.scaleFactor), pinchFocusX, pinchFocusY, detector.focusX, detector.focusY)
                     pinchFocusX = detector.focusX
                     pinchFocusY = detector.focusY
@@ -509,8 +532,8 @@ class PdfActivity : Activity() {
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
-                if (mode == 1 && !viewing.scrolling) {
-                    refreshSinglePage()
+                if (!viewing.scrolling) {
+                    refreshPagedBitmaps()
                     updateStatus()
                     return
                 }
@@ -529,10 +552,11 @@ class PdfActivity : Activity() {
             }
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
                 val viewport = if (::horizontal.isInitialized && horizontal.width > 0) horizontal.width else resources.displayMetrics.widthPixels
-                val width = (viewport * if (mode == 1 && !viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
+                val width = (viewport * if (!viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
                 super.onMeasure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), heightMeasureSpec)
             }
         }.apply {
+            clipChildren=false;clipToPadding=false
             setBackgroundColor(if (ThemePreferences.isDark(this@PdfActivity)) Color.rgb(41, 47, 51) else Color.rgb(232, 235, 239))
             dividerHeight = (8 * resources.displayMetrics.density).toInt()
             setOnScrollListener(object : AbsListView.OnScrollListener {
@@ -557,12 +581,6 @@ class PdfActivity : Activity() {
                     }
                 }
             })
-        }
-        list.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            if (right - left != oldRight - oldLeft) {
-                renderGeneration++
-                list.post { if (!closed) (list.adapter as? BaseAdapter)?.notifyDataSetChanged() }
-            }
         }
         horizontal = HorizontalScrollView(this).apply { addView(list) }
         horizontal.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeDocument() }
@@ -624,7 +642,7 @@ class PdfActivity : Activity() {
                 android.view.animation.Animation.RELATIVE_TO_SELF,if(expanded)-1f else 0f,
                 android.view.animation.Animation.RELATIVE_TO_SELF,if(expanded)0f else -1f
             ).apply {
-                duration=280;interpolator=android.view.animation.DecelerateInterpolator()
+                duration=if(android.animation.ValueAnimator.areAnimatorsEnabled())280 else 0;interpolator=android.view.animation.DecelerateInterpolator()
                 setAnimationListener(object:android.view.animation.Animation.AnimationListener {
                     override fun onAnimationStart(animation:android.view.animation.Animation)=Unit
                     override fun onAnimationRepeat(animation:android.view.animation.Animation)=Unit
@@ -636,9 +654,12 @@ class PdfActivity : Activity() {
         inkDock.post{if(!closed)layoutDocumentArea()}
         inkTools.visibility=if(expanded||inkChromeAnimating)View.VISIBLE else View.GONE
         val inline=inkAtTop()&&!failed
-        inkPanel.orientation=if(inline)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        inkTools.layoutParams=if(inline)LinearLayout.LayoutParams(0,-2,1f)else LinearLayout.LayoutParams(-1,-2)
-        inkStatus.layoutParams=LinearLayout.LayoutParams(if(inline)ui.dp(180)else -1,-2)
+        val orientation=if(inline)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if(inkPanel.orientation!=orientation||inkTools.layoutParams.width!=(if(inline)0 else -1)) {
+            inkPanel.orientation=orientation
+            inkTools.layoutParams=if(inline)LinearLayout.LayoutParams(0,-2,1f)else LinearLayout.LayoutParams(-1,-2)
+            inkStatus.layoutParams=LinearLayout.LayoutParams(if(inline)ui.dp(180)else -1,-2)
+        }
         // 저장 안내 유무와 무관한 문서 영역·확대율 유지
         inkStatus.visibility=when {
             inkStatus.text.isNotBlank()&&(inkEnabled||notice)->View.VISIBLE
@@ -688,12 +709,21 @@ class PdfActivity : Activity() {
             }
         }
         if(touchOnOverlay)return super.dispatchTouchEvent(event)
+        if(handleLassoContext(event))return true
         if (handleInk(event)) return true
+        if(pageTurnAnimator!=null)return true
+        if(event.actionMasked==MotionEvent.ACTION_DOWN){
+            pageVelocity?.recycle();pageVelocity=android.view.VelocityTracker.obtain()
+        }
+        pageVelocity?.addMovement(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val location = IntArray(2)
             if (::horizontal.isInitialized) horizontal.getLocationOnScreen(location)
             touchInDocument = ::horizontal.isInitialized && event.rawX >= location[0] && event.rawX < location[0] + horizontal.width &&
                 event.rawY >= location[1] && event.rawY < location[1] + horizontal.height
+        }
+        if(touchInDocument&&pageDrag&&event.actionMasked==MotionEvent.ACTION_POINTER_DOWN){
+            pageDrag=false;list.translationX=0f;pageTurnView?.let(contentRow::removeView);pageTurnView=null;pageTurnTarget=-1
         }
         if (touchInDocument && ::scaleDetector.isInitialized) {
             if(event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER)tapDetector.onTouchEvent(event)
@@ -727,17 +757,28 @@ class PdfActivity : Activity() {
                 if (inDocument && !viewing.scrolling && !(inkEnabled&&fingerInk) && !multiTouch && zoom <= 1f &&
                     kotlin.math.abs(dx) > 48 * resources.displayMetrics.density &&
                     kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
-                    super.dispatchTouchEvent(event)
-                    movePage(if (dx < 0) 1 else -1)
+                    pageVelocity?.computeCurrentVelocity(1000)
+                    finishPageDrag(dx,pageVelocity?.xVelocity?:0f)
+                    pageVelocity?.recycle();pageVelocity=null
                     return true
                 }
             }
         }
-        if (touchInDocument && (mode == 1 && !viewing.scrolling) && zoom > 1f) {
+        if(touchInDocument&&!viewing.scrolling&&zoom<=1f&&!(inkEnabled&&fingerInk)&&!multiTouch&&event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER) {
+            val dx=event.rawX-touchX;val dy=event.rawY-touchY
+            if(event.actionMasked==MotionEvent.ACTION_MOVE&&(pageDrag||kotlin.math.abs(dx)>android.view.ViewConfiguration.get(this).scaledTouchSlop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.25f)){
+                if(!pageDrag){val cancel=MotionEvent.obtain(event);cancel.action=MotionEvent.ACTION_CANCEL;super.dispatchTouchEvent(cancel);tapDetector.onTouchEvent(cancel);cancel.recycle();pageDrag=true}
+                dragPage(dx);return true
+            }
+            if(pageDrag&&(event.actionMasked==MotionEvent.ACTION_UP||event.actionMasked==MotionEvent.ACTION_CANCEL)){
+                finishPageDrag(if(event.actionMasked==MotionEvent.ACTION_CANCEL)0f else dx,0f);return true
+            }
+        }
+        if (touchInDocument && !viewing.scrolling && zoom > 1f) {
             if (event.actionMasked == MotionEvent.ACTION_MOVE) {
                 pageOffsetX = panStartX + event.rawX - touchX
                 pageOffsetY = panStartY + event.rawY - touchY
-                currentPageImage()?.let { applyPageMatrix(it) }
+                applyPagedTransform()
             }
             return true
         }
@@ -760,7 +801,9 @@ class PdfActivity : Activity() {
 
     private fun clearInkInput() {
         activeStroke = null; inkPoints.clear(); erasedStrokes.clear(); inkGestureStrokes = null
-        selectionPreview = null; movingSelection = false
+        movingSelection = false
+        selectionDragOverlay?.let(contentRow.overlay::remove);selectionDragOverlay=null;selectionDragBase=null
+        invalidatePageLayers()
         inkImage?.invalidate(); inkPointer = -1; inkImage = null
     }
 
@@ -809,7 +852,7 @@ class PdfActivity : Activity() {
                     val tool = if(stylusEraser&&event.getToolType(pointer)==MotionEvent.TOOL_TYPE_STYLUS)"eraser"else inkTool
                     switchInkSegment(image,p,tool)
                     if (activeInkTool == "eraser") eraseInk(image, inkPoints.last(), p)
-                    if (movingSelection) selectionPreview = inkSelection?.moved(p.x - inkPoints.first().x, p.y - inkPoints.first().y)
+                    if (movingSelection) updateSelectionDrag(event,pointer)
                     inkPoints.add(p)
                 }
                 image.invalidate()
@@ -817,20 +860,22 @@ class PdfActivity : Activity() {
             if ((event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_POINTER_UP) && event.getPointerId(event.actionIndex) == inkPointer) {
                 if (image != null && pointer >= 0) inkPoint(image, event, pointer)?.let { p ->
                     if (activeInkTool == "eraser") eraseInk(image, inkPoints.last(), p)
-                    if (movingSelection) selectionPreview = inkSelection?.moved(p.x - inkPoints.first().x, p.y - inkPoints.first().y)
+                    if (movingSelection) updateSelectionDrag(event,pointer)
                     inkPoints.add(p)
                 }
                 finishInkSegment()
                 inkGestureStrokes?.let { commitInk(it) }
                 if (activeInkTool == "lasso") {
                     if (movingSelection) {
-                        selectionPreview?.let { moved -> commitInk(moved.documentStrokes); inkSelection = moved }
+                        val moved=selectionDestination(event,pointer)
+                        if(moved!=null){commitInk(moved.documentStrokes);inkSelection=moved}
+                        else android.widget.Toast.makeText(this,"선택한 필기가 들어가는 페이지 안에 놓아 주세요.",android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         val page = image?.getTag(R.id.pdf_page_index) as? Int
                         inkSelection = if (page == null) null else InkSelection.enclose(inkNote!!.strokes, page, inkPoints)
                         if (!inkDirty) inkStatus.text = inkSelection?.let { "${it.indices.size}개 획 선택 · 끌어서 이동" } ?: "선택한 필기 없음"
                     }
-                    selectionPreview = null; movingSelection = false
+                    movingSelection = false
                     invalidateInk()
                 }
                 clearInkInput()
@@ -839,7 +884,7 @@ class PdfActivity : Activity() {
         }
         if (!inkEnabled || inkNote == null || event.actionMasked != MotionEvent.ACTION_DOWN) return false
         val tool = event.getToolType(0)
-        if (tool != MotionEvent.TOOL_TYPE_STYLUS && !(fingerInk && tool == MotionEvent.TOOL_TYPE_FINGER)) return false
+        if (tool != MotionEvent.TOOL_TYPE_STYLUS && !((fingerInk||fingerSelectionDrag) && tool == MotionEvent.TOOL_TYPE_FINGER)) return false
         for (i in 0 until list.childCount) {
             val row = list.getChildAt(i) as? LinearLayout ?: continue
             for (j in 0 until row.childCount) {
@@ -849,10 +894,8 @@ class PdfActivity : Activity() {
                 if (!image.getGlobalVisibleRect(bounds) || !bounds.contains(event.x.toInt(), event.y.toInt())) continue
                 val drawable = image.drawable ?: continue
                 val point = inkPoint(image, event, 0) ?: continue
-                val area = RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
-                image.imageMatrix.mapRect(area)
-                val location = IntArray(2); image.getLocationOnScreen(location)
-                if (!area.contains(event.rawX - location[0], event.rawY - location[1])) continue
+                val paper=pageScreenBounds(image)?:continue
+                if(!paper.contains(event.rawX,event.rawY))continue
                 inkPointer = event.getPointerId(0); inkImage = image
                 inkGestureStrokes = requireNotNull(inkNote).strokes
                 activeInkTool = if(stylusEraser&&tool==MotionEvent.TOOL_TYPE_STYLUS) "eraser" else inkTool
@@ -860,13 +903,12 @@ class PdfActivity : Activity() {
                 startInkSegment(image,point)
                 if (activeInkTool == "lasso") {
                     val selected = inkSelection
-                    val radius = 12 * resources.displayMetrics.density / image.imageMatrix.mapRadius(1f)
-                    val padX = radius / drawable.intrinsicWidth; val padY = radius / drawable.intrinsicHeight
+                    val padX = 12*resources.displayMetrics.density/paper.width(); val padY = 12*resources.displayMetrics.density/paper.height()
                     movingSelection = selected != null && selected.page == image.getTag(R.id.pdf_page_index) &&
                         point.x in (selected.bounds.left - padX)..(selected.bounds.right + padX) &&
                         point.y in (selected.bounds.top - padY)..(selected.bounds.bottom + padY)
                     if (!movingSelection) inkSelection = null
-                    selectionPreview = null
+                    if(movingSelection)startSelectionDrag(image,event)
                 }
                 scaleDetector.onTouchEvent(event)
                 image.parent.requestDisallowInterceptTouchEvent(true)
@@ -875,6 +917,139 @@ class PdfActivity : Activity() {
             }
         }
         return false
+    }
+
+    private fun invalidatePageLayers() {
+        for(i in 0 until list.childCount){val row=list.getChildAt(i) as? LinearLayout?:continue;for(j in 0 until row.childCount)row.getChildAt(j).invalidate()}
+    }
+
+    private fun imageAt(x:Float,y:Float):ImageView? {
+        for(i in 0 until list.childCount){val row=list.getChildAt(i) as? LinearLayout?:continue
+            for(j in 0 until row.childCount){val image=row.getChildAt(j) as? ImageView?:continue
+                if(pageScreenBounds(image)?.contains(x,y)==true)return image
+            }
+        }
+        return null
+    }
+
+    private fun handleLassoContext(event:MotionEvent):Boolean {
+        if(event.actionMasked==MotionEvent.ACTION_DOWN){
+            contextConsumed=false;fingerSelectionDrag=false
+            lassoHold?.let(horizontal::removeCallbacks);lassoHold=null
+            if(!inkEnabled||inkTool!="lasso"||event.getToolType(0)!=MotionEvent.TOOL_TYPE_FINGER)return false
+            val image=imageAt(event.rawX,event.rawY)?:return false
+            val paper=pageScreenBounds(image)?:return false
+            val point=InkPoint((event.rawX-paper.left)/paper.width(),(event.rawY-paper.top)/paper.height(),1f,event.eventTime)
+            val selection=inkSelection
+            val pad=12*resources.displayMetrics.density
+            val selected=selection!=null&&selection.page==image.getTag(R.id.pdf_page_index)&&
+                point.x in selection.bounds.left-pad/paper.width()..selection.bounds.right+pad/paper.width()&&
+                point.y in selection.bounds.top-pad/paper.height()..selection.bounds.bottom+pad/paper.height()
+            fingerSelectionDrag=selected
+            contextX=event.rawX;contextY=event.rawY
+            lassoHold=Runnable {
+                lassoHold=null;contextConsumed=true
+                clearInkInput();inkSelection=selection
+                val cancel=MotionEvent.obtain(0,android.os.SystemClock.uptimeMillis(),MotionEvent.ACTION_CANCEL,0f,0f,0)
+                tapDetector.onTouchEvent(cancel);cancel.recycle()
+                showInkContext(image,point,selected,contextX,contextY)
+                invalidateInk()
+            }.also {horizontal.postDelayed(it,android.view.ViewConfiguration.getLongPressTimeout().toLong())}
+        }else if(event.actionMasked==MotionEvent.ACTION_MOVE){
+            val slop=android.view.ViewConfiguration.get(this).scaledTouchSlop
+            if(kotlin.math.hypot(event.rawX-contextX,event.rawY-contextY)>slop){lassoHold?.let(horizontal::removeCallbacks);lassoHold=null}
+        }else if(event.actionMasked==MotionEvent.ACTION_UP||event.actionMasked==MotionEvent.ACTION_CANCEL||event.actionMasked==MotionEvent.ACTION_POINTER_DOWN){
+            lassoHold?.let(horizontal::removeCallbacks);lassoHold=null
+            if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN)fingerSelectionDrag=false
+        }
+        return contextConsumed
+    }
+
+    private fun showInkContext(image:ImageView,point:InkPoint,selected:Boolean,x:Float,y:Float) {
+        inkContextMenu?.dismiss()
+        val ui=UiStyle(this)
+        val root=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;setPadding(ui.dp(6),ui.dp(6),ui.dp(6),ui.dp(6));background=ui.rounded(ui.surface,12,ui.line)}
+        val popup=android.widget.PopupWindow(root,ui.dp(172),-2,true)
+        popup.setBackgroundDrawable(ui.rounded(ui.surface,12));popup.elevation=ui.dp(8).toFloat();popup.isOutsideTouchable=true
+        popup.setOnDismissListener {if(inkContextMenu===popup)inkContextMenu=null}
+        fun command(label:String,enabled:Boolean=true,action:()->Unit){root.addView(ui.button(label,color=if(label=="삭제")ui.danger else ui.text){popup.dismiss();action();invalidateInk()}.apply{isEnabled=enabled;gravity=android.view.Gravity.START},LinearLayout.LayoutParams(-1,ui.dp(48)))}
+        if(selected){
+            command("복사"){copyInkToClipboard(false)}
+            command("잘라내기"){copyInkToClipboard(true)}
+            command("삭제"){deleteSelectedInk()}
+        }else command("붙여넣기",inkClipboard!=null){pasteInk(image,point)}
+        root.measure(View.MeasureSpec.makeMeasureSpec(ui.dp(172),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+        val location=IntArray(2);window.decorView.getLocationOnScreen(location)
+        val left=(x-location[0]+ui.dp(8)).toInt().coerceIn(0,(window.decorView.width-ui.dp(172)).coerceAtLeast(0))
+        val top=(y-location[1]+ui.dp(8)).toInt().coerceIn(0,(window.decorView.height-root.measuredHeight).coerceAtLeast(0))
+        inkContextMenu=popup;popup.showAtLocation(window.decorView,android.view.Gravity.TOP or android.view.Gravity.LEFT,left,top)
+    }
+
+    private fun copyInkToClipboard(cut:Boolean) {
+        val selection=inkSelection?:return
+        val size=pageDimensions[selection.page]?:return
+        inkClipboard=InkClipboard(selection.documentStrokes.filterIndexed {i,_->i in selection.indices},size.first,size.second)
+        if(cut)deleteSelectedInk()
+    }
+
+    private fun pasteInk(image:ImageView,point:InkPoint) {
+        val clipboard=inkClipboard?:return
+        val note=inkNote?:return
+        val page=image.getTag(R.id.pdf_page_index) as Int
+        val size=pageDimensions[page]?:return
+        val original=InkSelection(clipboard.strokes.indices.toSet(),clipboard.strokes)
+        val pasted=original.transferred(page,point.x,point.y,clipboard.width.toFloat()/size.first,clipboard.height.toFloat()/size.second,
+            minOf(clipboard.width,clipboard.height).toFloat()/minOf(size.first,size.second))
+        if(pasted==null){android.widget.Toast.makeText(this,"선택한 필기가 이 페이지보다 큽니다.",android.widget.Toast.LENGTH_SHORT).show();return}
+        val strokes=note.strokes+pasted.documentStrokes
+        commitInk(strokes);inkSelection=InkSelection((note.strokes.size until strokes.size).toSet(),strokes)
+    }
+
+    private fun startSelectionDrag(image:ImageView,event:MotionEvent) {
+        val selection=inkSelection?:return
+        val drawable=image.drawable?:return
+        selectionDragX=event.rawX;selectionDragY=event.rawY;selectionDragDx=0f;selectionDragDy=0f
+        selectionDragBase=selection.documentStrokes.filterIndexed {i,_->i !in selection.indices}
+        val selected=selection.documentStrokes.filterIndexed {i,_->i in selection.indices}
+        selectionDragOverlay=object:android.graphics.drawable.Drawable(){
+            override fun draw(canvas:Canvas){
+                val saved=canvas.save();canvas.clipRect(horizontal.left,horizontal.top,horizontal.right,horizontal.bottom)
+                val location=IntArray(2);contentRow.getLocationOnScreen(location)
+                canvas.translate(selectionDragDx-location[0],selectionDragDy-location[1])
+                val matrix=android.graphics.Matrix();image.transformMatrixToGlobal(matrix);canvas.concat(matrix);canvas.concat(image.imageMatrix)
+                drawStrokes(canvas,selected,selection.page,drawable.intrinsicWidth,drawable.intrinsicHeight)
+                canvas.restoreToCount(saved)
+            }
+            override fun setAlpha(alpha:Int)=Unit
+            override fun setColorFilter(filter:android.graphics.ColorFilter?)=Unit
+            @Deprecated("Drawable 형식") override fun getOpacity()=android.graphics.PixelFormat.TRANSLUCENT
+        }.apply {setBounds(0,0,contentRow.width,contentRow.height);contentRow.overlay.add(this)}
+        invalidatePageLayers()
+    }
+
+    private fun updateSelectionDrag(event:MotionEvent,pointer:Int) {
+        selectionDragDx=event.getRawX(pointer)-selectionDragX;selectionDragDy=event.getRawY(pointer)-selectionDragY
+        selectionDragOverlay?.invalidateSelf()
+    }
+
+    private fun selectionDestination(event:MotionEvent,pointer:Int):InkSelection? {
+        val selection=inkSelection?:return null
+        if(kotlin.math.hypot(event.getRawX(pointer)-selectionDragX,event.getRawY(pointer)-selectionDragY)<android.view.ViewConfiguration.get(this).scaledTouchSlop)return selection
+        val source=inkImage?:return null
+        val bounds=pageScreenBounds(source)?:return null
+        val x=bounds.left+selection.bounds.centerX()*bounds.width()+event.getRawX(pointer)-selectionDragX
+        val y=bounds.top+selection.bounds.centerY()*bounds.height()+event.getRawY(pointer)-selectionDragY
+        for(i in 0 until list.childCount){val row=list.getChildAt(i) as? LinearLayout?:continue
+            for(j in 0 until row.childCount){val image=row.getChildAt(j) as? ImageView?:continue
+                val target=pageScreenBounds(image)?:continue
+                if(!target.contains(x,y))continue
+                val page=image.getTag(R.id.pdf_page_index) as Int
+                val from=pageDimensions[selection.page]?:return null;val to=pageDimensions[page]?:return null
+                return selection.transferred(page,(x-target.left)/target.width(),(y-target.top)/target.height(),
+                    from.first.toFloat()/to.first,from.second.toFloat()/to.second,minOf(from.first,from.second).toFloat()/minOf(to.first,to.second))
+            }
+        }
+        return null
     }
 
     private class InkLayer {
@@ -904,8 +1079,8 @@ class PdfActivity : Activity() {
 
     private fun drawInk(canvas: Canvas, image: ImageView, page: Int, layer: InkLayer? = null) {
         val drawable = image.drawable ?: return
-        val strokes = (selectionPreview?.documentStrokes ?: inkGestureStrokes ?: inkNote?.strokes).orEmpty()
-        val cached = layer != null && canvas.isHardwareAccelerated && selectionPreview == null && erasedStrokes.isEmpty() && strokes.isNotEmpty()
+        val strokes = (selectionDragBase ?: inkGestureStrokes ?: inkNote?.strokes).orEmpty()
+        val cached = layer != null && canvas.isHardwareAccelerated && erasedStrokes.isEmpty() && strokes.isNotEmpty()
         if (!cached) layer?.strokes = null
         if (cached) {
             requireNotNull(layer)
@@ -933,7 +1108,7 @@ class PdfActivity : Activity() {
             strokeWidth = 2 * resources.displayMetrics.density / image.imageMatrix.mapRadius(1f)
             pathEffect = android.graphics.DashPathEffect(floatArrayOf(strokeWidth * 3, strokeWidth * 2), 0f)
         }
-        (selectionPreview ?: inkSelection)?.takeIf { it.page == page }?.let { selection ->
+        inkSelection?.takeIf { !movingSelection&&it.page == page }?.let { selection ->
             val b = selection.bounds
             canvas.drawRect(b.left * drawable.intrinsicWidth - outline.strokeWidth * 3,
                 b.top * drawable.intrinsicHeight - outline.strokeWidth * 3,
@@ -1079,6 +1254,7 @@ class PdfActivity : Activity() {
 
     private fun showPage(index: Int) {
         if (index !in 0 until pageCount) return
+        pageTurnAnimator?.let {it.removeAllListeners();it.cancel();pageTurnAnimator=null;list.translationX=0f;pageTurnView?.let(contentRow::removeView);pageTurnView=null;pageTurnTarget=-1}
         clearInkSelection()
         navigationGeneration++
         if (viewing.scrolling) {
@@ -1097,7 +1273,55 @@ class PdfActivity : Activity() {
 
     private fun movePage(direction: Int) {
         val row=viewing.row(pageIndex,mode)+direction
-        if(row in 0 until viewing.rows(pageCount,mode))showPage(viewing.first(row,mode))
+        if(row in 0 until viewing.rows(pageCount,mode)) {
+            if(viewing.scrolling||zoom>1f)showPage(viewing.first(row,mode))
+            else if(pageTurnAnimator==null){dragPage(-direction.toFloat());settlePageTurn(true,-direction*horizontal.width.toFloat())}
+        }
+    }
+
+    private fun dragPage(dx:Float) {
+        val direction=if(dx<0)1 else -1
+        val row=viewing.row(pageIndex,mode)+direction
+        val target=if(row in 0 until viewing.rows(pageCount,mode))viewing.first(row,mode)else -1
+        if(target!=pageTurnTarget){pageTurnView?.let(contentRow::removeView);pageTurnView=null;pageTurnTarget=target}
+        if(target>=0&&pageTurnView==null){
+            val preview=PageAdapter(target).getView(0,null,list)
+            val margins=horizontal.layoutParams as android.widget.FrameLayout.LayoutParams
+            contentRow.addView(preview,contentRow.indexOfChild(horizontal)+1,android.widget.FrameLayout.LayoutParams(horizontal.width,horizontal.height).apply{leftMargin=margins.leftMargin;topMargin=margins.topMargin})
+            pageTurnView=preview
+        }
+        val offset=if(target<0)dx*.18f else dx.coerceIn(-horizontal.width.toFloat(),horizontal.width.toFloat())
+        list.translationX=offset
+        pageTurnView?.translationX=offset+direction*horizontal.width
+    }
+
+    private fun finishPageDrag(dx:Float,velocity:Float) {
+        if(!pageDrag)dragPage(dx)
+        pageDrag=false
+        val valid=pageTurnTarget>=0
+        val advance=valid&&(kotlin.math.abs(dx)>horizontal.width*.2f||kotlin.math.abs(velocity)>600*resources.displayMetrics.density&&dx*velocity>0)
+        settlePageTurn(advance,if(advance)if(dx<0)-horizontal.width.toFloat()else horizontal.width.toFloat()else 0f,velocity)
+    }
+
+    private fun settlePageTurn(advance:Boolean,end:Float,velocity:Float=0f) {
+        val start=list.translationX
+        val preview=pageTurnView
+        val previewStart=preview?.translationX?:0f
+        val target=pageTurnTarget
+        val animation=android.animation.ValueAnimator.ofFloat(start,end).apply {
+            duration=(kotlin.math.abs(end-start)/maxOf(kotlin.math.abs(velocity),horizontal.width*4f)*1000).toLong().coerceIn(100,260)
+            interpolator=android.view.animation.DecelerateInterpolator()
+            addUpdateListener {val x=it.animatedValue as Float;list.translationX=x;preview?.translationX=previewStart+x-start}
+            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){
+                pageTurnAnimator=null;list.translationX=0f
+                if(advance&&target>=0)showPage(target)
+                list.viewTreeObserver.addOnPreDrawListener(object:android.view.ViewTreeObserver.OnPreDrawListener{override fun onPreDraw():Boolean{
+                    list.viewTreeObserver.removeOnPreDrawListener(this);preview?.let(contentRow::removeView)
+                    if(pageTurnView===preview){pageTurnView=null;pageTurnTarget=-1};return true
+                }})
+            }})
+        }
+        pageTurnAnimator=animation;animation.start()
     }
 
     private fun rowForPage(index: Int) = if(viewing.scrolling)viewing.row(index,mode)else 0
@@ -1222,28 +1446,67 @@ class PdfActivity : Activity() {
 
     private fun layoutDocumentArea() {
         if(!::horizontal.isInitialized||!::inkDock.isInitialized)return
-        val left=if(thumbnailPanel!=null&&UiStyle(this).useSidePanel())UiStyle(this).dp(200)else 0
-        val tools=if(inkDock.visibility==View.VISIBLE)inkDock.height else 0
+        val left=if(thumbnailExpanded&&UiStyle(this).useSidePanel())UiStyle(this).dp(200)else 0
+        val notice=inkPreparing||inkStatus.text.contains("실패")||inkStatus.text.contains("오류")||inkStatus.text.startsWith("암호 PDF")
+        val tools=if(inkChromeExpanded||notice)inkDock.height else 0
         val document=horizontal.layoutParams as android.widget.FrameLayout.LayoutParams
         val top=if(inkAtTop())tools else 0
         val bottom=if(inkAtTop())0 else tools
         if(document.leftMargin==left&&document.topMargin==top&&document.bottomMargin==bottom)return
+        val before=pageScreenBounds()
+        val generation=++documentMotionGeneration
+        documentLayoutPending=true
+        horizontal.animate().cancel()
+        horizontal.scaleX=1f;horizontal.scaleY=1f;horizontal.translationX=0f;horizontal.translationY=0f
         document.leftMargin=left;document.topMargin=top;document.bottomMargin=bottom
         horizontal.layoutParams=document
         val dock=inkDock.layoutParams as android.widget.FrameLayout.LayoutParams
         dock.leftMargin=left;inkDock.layoutParams=dock
+        horizontal.viewTreeObserver.addOnPreDrawListener(object:android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw():Boolean {
+                horizontal.viewTreeObserver.removeOnPreDrawListener(this)
+                if(generation!=documentMotionGeneration)return true
+                documentLayoutPending=false
+                val after=pageScreenBounds()
+                if(before!=null&&after!=null&&after.width()>0f) {
+                    val location=IntArray(2);horizontal.getLocationOnScreen(location)
+                    val scale=before.width()/after.width()
+                    horizontal.pivotX=0f;horizontal.pivotY=0f
+                    horizontal.scaleX=scale;horizontal.scaleY=scale
+                    horizontal.translationX=before.left-after.left-(after.left-location[0])*(scale-1f)
+                    horizontal.translationY=before.top-after.top-(after.top-location[1])*(scale-1f)
+                    horizontal.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f)
+                        .setDuration(280).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                }
+                return true
+            }
+        })
+    }
+
+    private fun pageScreenBounds(image:ImageView?=currentPageImage()):RectF? {
+        image?:return null
+        val drawable=image.drawable?:return null
+        val bounds=RectF(0f,0f,drawable.intrinsicWidth.toFloat(),drawable.intrinsicHeight.toFloat())
+        image.imageMatrix.mapRect(bounds)
+        val matrix=android.graphics.Matrix();image.transformMatrixToGlobal(matrix);matrix.mapRect(bounds)
+        return bounds
     }
 
     private fun resizeDocument() {
         if(horizontal.width<=0||horizontal.height<=0)return
-        if(documentAreaWidth>0&&(documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height)){
+        if(!documentLayoutPending&&documentAreaWidth>0&&(documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height)){
             zoom=1f;pageOffsetX=0f;pageOffsetY=0f
+            navigationGeneration++;scrollAnchorPage=pageIndex
         }
         val changed=documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height
         documentAreaWidth=horizontal.width;documentAreaHeight=horizontal.height
-        if(changed){renderGeneration++;(list.adapter as? BaseAdapter)?.notifyDataSetChanged();list.setSelection(rowForPage(pageIndex))}
+        if(changed){
+            val first=list.firstVisiblePosition;val top=list.getChildAt(0)?.top?:0
+            renderGeneration++;(list.adapter as? BaseAdapter)?.notifyDataSetChanged()
+            if(documentLayoutPending)list.setSelectionFromTop(first,top)else list.setSelection(rowForPage(pageIndex))
+        }
 
-        val width = (horizontal.width * if (mode == 1 && !viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
+        val width = (horizontal.width * if (!viewing.scrolling) 1f else zoom).toInt().coerceAtLeast(1)
         if (list.layoutParams.width != width) {
             renderGeneration++
             list.layoutParams = android.widget.FrameLayout.LayoutParams(width, -1)
@@ -1253,14 +1516,14 @@ class PdfActivity : Activity() {
     }
 
     private fun setZoom(value: Float, focusX: Float? = null, focusY: Float? = null, targetX: Float? = focusX, targetY: Float? = focusY) {
-        if (mode == 1 && !viewing.scrolling) {
+        if (!viewing.scrolling) {
             val image = currentPageImage() ?: return
             val location = IntArray(2)
             image.getLocationInWindow(location)
             val x = focusX ?: location[0] + image.width / 2f
             val y = focusY ?: location[1] + image.height / 2f
             setPageZoom(value, x, y, targetX ?: x, targetY ?: y)
-            refreshSinglePage()
+            refreshPagedBitmaps()
             updateStatus()
             return
         }
@@ -1279,8 +1542,25 @@ class PdfActivity : Activity() {
         val newTop = (targetLocalY - (y - top) * ratio).toInt()
         zoom = next
         resizeDocument()
-        list.setSelectionFromTop(first, newTop)
-        horizontal.post { horizontal.scrollTo(left, 0) }
+        val generation=++navigationGeneration
+        scrollAnchorPage=pageIndex
+        // 새 행 크기와 스크롤 원점이 함께 확정된 프레임만 표시
+        list.viewTreeObserver.addOnPreDrawListener(object:android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw():Boolean {
+                if(closed||generation!=navigationGeneration){list.viewTreeObserver.removeOnPreDrawListener(this);return true}
+                val height=(horizontal.height*zoom).toInt().coerceAtLeast(1)
+                val stride=height+list.dividerHeight
+                val count=viewing.rows(pageCount,mode)
+                val total=count.toLong()*stride-list.dividerHeight
+                val offset=(first.toLong()*stride-newTop).coerceIn(0L,(total-list.height).coerceAtLeast(0))
+                val actual=list.firstVisiblePosition.toLong()*stride-(list.getChildAt(0)?.top?:0)
+                if(kotlin.math.abs(actual-offset)>1){list.setSelectionFromTop((offset/stride).toInt(),-(offset%stride).toInt());return false}
+                horizontal.scrollTo(left,0)
+                list.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+        list.requestLayout()
         if (pageCount > 0) updateStatus()
     }
 
@@ -1294,65 +1574,83 @@ class PdfActivity : Activity() {
             setScale(scale,scale)
             postTranslate(if(left)image.width-drawable.intrinsicWidth*scale else 0f,(image.height-drawable.intrinsicHeight*scale)/2f)
         }
+        if(!viewing.scrolling)applyPagedTransform()
     }
 
     private fun applyPageMatrix(image: ImageView) {
         val drawable = image.drawable ?: return
         if (image.width == 0 || image.height == 0) return
         val fit = minOf(image.width.toFloat() / drawable.intrinsicWidth, image.height.toFloat() / drawable.intrinsicHeight)
-        val scale = fit * zoom
-        val width = drawable.intrinsicWidth * scale
-        val height = drawable.intrinsicHeight * scale
-        pageOffsetX = pageOffsetX.coerceIn(-maxOf(0f, (width - image.width) / 2f), maxOf(0f, (width - image.width) / 2f))
-        pageOffsetY = pageOffsetY.coerceIn(-maxOf(0f, (height - image.height) / 2f), maxOf(0f, (height - image.height) / 2f))
         image.imageMatrix = android.graphics.Matrix().apply {
-            setScale(scale, scale)
-            postTranslate((image.width - width) / 2f + pageOffsetX, (image.height - height) / 2f + pageOffsetY)
+            setScale(fit, fit)
+            postTranslate((image.width - drawable.intrinsicWidth*fit) / 2f,(image.height - drawable.intrinsicHeight*fit) / 2f)
         }
+        if(!viewing.scrolling)applyPagedTransform()
+    }
+
+    private fun applyPagedTransform() {
+        val row=list.getChildAt(0) as? LinearLayout?:return
+        if(row.width==0||row.height==0)return
+        var paper:RectF?=null
+        for(i in 0 until row.childCount){val image=row.getChildAt(i) as? ImageView?:continue;val drawable=image.drawable?:continue
+            val rect=RectF(0f,0f,drawable.intrinsicWidth.toFloat(),drawable.intrinsicHeight.toFloat())
+            image.imageMatrix.mapRect(rect);rect.offset(image.left.toFloat(),image.top.toFloat())
+            if(paper==null)paper=rect else paper.union(rect)
+        }
+        val area=paper?:return
+        val maxX=maxOf(0f,(area.width()*zoom-horizontal.width)/2f)
+        val maxY=maxOf(0f,(area.height()*zoom-horizontal.height)/2f)
+        pageOffsetX=pageOffsetX.coerceIn(-maxX,maxX);pageOffsetY=pageOffsetY.coerceIn(-maxY,maxY)
+        row.pivotX=row.width/2f;row.pivotY=row.height/2f
+        row.scaleX=zoom;row.scaleY=zoom;row.translationX=pageOffsetX;row.translationY=pageOffsetY
     }
 
     private fun setPageZoom(value: Float, focusX: Float, focusY: Float, targetX: Float, targetY: Float) {
-        val image = currentPageImage() ?: return
+        val row=list.getChildAt(0)?:return
         val next = value.coerceIn(1f, 4f)
         val location = IntArray(2)
-        image.getLocationInWindow(location)
+        list.getLocationInWindow(location)
         val ratio = next / zoom
-        pageOffsetX = (targetX - location[0] - image.width / 2f) - (focusX - location[0] - image.width / 2f - pageOffsetX) * ratio
-        pageOffsetY = (targetY - location[1] - image.height / 2f) - (focusY - location[1] - image.height / 2f - pageOffsetY) * ratio
+        pageOffsetX = (targetX - location[0] - row.width / 2f) - (focusX - location[0] - row.width / 2f - pageOffsetX) * ratio
+        pageOffsetY = (targetY - location[1] - row.height / 2f) - (focusY - location[1] - row.height / 2f - pageOffsetY) * ratio
         zoom = next
-        applyPageMatrix(image)
+        applyPagedTransform()
     }
 
-    private fun refreshSinglePage() {
-        val image = currentPageImage() ?: return
-        val index = pageIndex
-        val width = (((horizontal.width * zoom).toInt() + 127) / 128 * 128).coerceIn(128, 2560)
-        val key = "$index:$width"
-        if (image.tag == key) return
-        image.tag = key
-        fun display(bitmap: Bitmap) {
-            if (!closed && (mode == 1 && !viewing.scrolling) && pageIndex == index && currentPageImage() === image && image.tag == key) {
-                image.setImageBitmap(bitmap)
-                applyPageMatrix(image)
-            }
-        }
-        val cached = cache.get(key)
-        if (cached != null) display(cached) else worker.execute {
-            try {
-                if (!closed) {
-                    val bitmap = drawPage(index, width)
-                    if (!closed) runOnUiThread {
-                        if (!closed) { cache.put(key, bitmap); display(bitmap) }
-                    }
+    private fun refreshPagedBitmaps() {
+        val row=list.getChildAt(0) as? LinearLayout?:return
+        for(i in 0 until row.childCount){
+            val image=row.getChildAt(i) as? ImageView?:continue
+            val index=image.getTag(R.id.pdf_page_index) as Int
+            val width = (((image.width * zoom).toInt() + 127) / 128 * 128).coerceIn(128, 2560)
+            val key = "$index:$width"
+            if (image.tag == key) continue
+            image.tag = key
+            fun display(bitmap: Bitmap) {
+                if (!closed && !viewing.scrolling && image.parent===row && list.getChildAt(0)===row && image.tag == key) {
+                    image.setImageBitmap(bitmap)
+                    if(mode==2&&row.childCount>1)applySpreadMatrix(image,i==0)else applyPageMatrix(image)
                 }
-            } catch (error: Exception) {
-                if (!closed) runOnUiThread { if (!closed && image.tag == key) status.text = "PDF 오류: ${error.message}" }
+            }
+            val cached = cache.get(key)
+            if (cached != null) display(cached) else worker.execute {
+                try {
+                    if (!closed) {
+                        val bitmap = drawPage(index, width)
+                        if (!closed) runOnUiThread {
+                            if (!closed) { cache.put(key, bitmap); display(bitmap) }
+                        }
+                    }
+                } catch (error: Exception) {
+                    if (!closed) runOnUiThread { if (!closed && image.tag == key) status.text = "PDF 오류: ${error.message}" }
+                }
             }
         }
     }
 
     private fun drawPage(index: Int, targetWidth: Int = 960, thumbnail: Boolean = false): Bitmap {
         val page = (renderer ?: throw IOException("문서가 닫혔습니다.")).openPage(index)
+        pageDimensions[index]=page.width to page.height
         return page.use {
             val (width, height) = if (thumbnail) {
                 val scale = minOf(targetWidth.toFloat() / it.width, 320f / it.height)
@@ -1372,6 +1670,28 @@ class PdfActivity : Activity() {
                 }
             }
             result
+        }
+    }
+
+    private fun prefetchPageTurns() {
+        if(viewing.scrolling||searching||closed)return
+        val current=viewing.row(pageIndex,mode)
+        val generation=renderGeneration
+        for(row in listOf(current-1,current+1).filter {it in 0 until viewing.rows(pageCount,mode)}) {
+            val first=viewing.first(row,mode)
+            val count=if(mode==2&&viewing.cover&&first==0)1 else mode
+            val gap=if(count==2)UiStyle(this).dp(6)*zoom else 0f
+            val width=((((horizontal.width*zoom-gap)/count).toInt()+127)/128*128).coerceIn(128,2560)
+            for(index in first until minOf(first+count,pageCount)) {
+                val key="$index:$width"
+                if(cache.get(key)!=null)continue
+                worker.execute {
+                    if(!closed&&generation==renderGeneration&&cache.get(key)==null)try {
+                        val bitmap=drawPage(index,width)
+                        if(!closed&&generation==renderGeneration)cache.put(key,bitmap)
+                    }catch(error:Exception){if(!closed)runOnUiThread{if(!closed)status.text="PDF 미리 준비 실패: ${error.message}"}}
+                }
+            }
         }
     }
 
@@ -1447,47 +1767,56 @@ class PdfActivity : Activity() {
     private fun showThumbnails() {
         if(pageCount==0||searching)return
         thumbnailPanel?.let {panel->
-            animateThumbnailPanel(panel,0){contentRow.removeView(panel);thumbnailPanel=null}
+            thumbnailExpanded=!thumbnailExpanded
+            animateThumbnailPanel(panel,if(thumbnailExpanded)UiStyle(this).dp(200)else 0){
+                if(!thumbnailExpanded){contentRow.removeView(panel);thumbnailPanel=null}
+            }
             return
         }
         if(!UiStyle(this).useSidePanel()){showPageOverview();return}
         val ui=UiStyle(this)
         val panel=pageList(true){showPage(it)}
-        thumbnailPanel=panel;contentRow.addView(panel,android.widget.FrameLayout.LayoutParams(0,-1,android.view.Gravity.START))
+        thumbnailExpanded=true
+        thumbnailPanel=panel;contentRow.addView(panel,android.widget.FrameLayout.LayoutParams(ui.dp(200),-1,android.view.Gravity.START))
+        panel.translationX=-ui.dp(200).toFloat()
         animateThumbnailPanel(panel,ui.dp(200)){}
     }
 
     private fun animateThumbnailPanel(panel:View,target:Int,finished:()->Unit) {
         thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
-        thumbnailAnimator=android.animation.ValueAnimator.ofInt(panel.layoutParams.width,target).apply {
+        layoutDocumentArea()
+        thumbnailAnimator=android.animation.ValueAnimator.ofFloat(panel.translationX,if(target==0)-UiStyle(this@PdfActivity).dp(200).toFloat()else 0f).apply {
             duration=280;interpolator=android.view.animation.DecelerateInterpolator()
-            addUpdateListener {panel.layoutParams=panel.layoutParams.apply {width=it.animatedValue as Int}}
+            addUpdateListener {panel.translationX=it.animatedValue as Float}
             addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){finished();layoutDocumentArea()}})
             start()
         }
     }
 
-    private inner class PageAdapter : BaseAdapter() {
+    private inner class PageAdapter(private val previewPage:Int?=null) : BaseAdapter() {
         override fun getCount() = if(viewing.scrolling)viewing.rows(pageCount,mode)else 1
-        override fun getItem(position: Int) = pageForRow(position)
+        override fun getItem(position: Int) = previewPage?:pageForRow(position)
         override fun getItemId(position: Int) = getItem(position).toLong()
         override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
             val page = getItem(position)
+            val previous=(recycled as? LinearLayout)?.let { row -> (0 until row.childCount).mapNotNull {i->
+                (row.getChildAt(i) as? ImageView)?.let {image->(image.getTag(R.id.pdf_page_index) as? Int)?.let {it to image.drawable}}
+            }.toMap() }.orEmpty()
             val row = (recycled as? LinearLayout ?: LinearLayout(this@PdfActivity)).apply {
                 orientation = LinearLayout.HORIZONTAL
                 minimumHeight = 0
-                layoutParams=AbsListView.LayoutParams(-1, (horizontal.height*if(mode==1&&!viewing.scrolling)1f else zoom).toInt().coerceAtLeast(1))
+                layoutParams=AbsListView.LayoutParams(-1, (horizontal.height*if(!viewing.scrolling)1f else zoom).toInt().coerceAtLeast(1))
                 gravity = android.view.Gravity.CENTER
                 removeAllViews()
             }
             val singleCover=mode==2&&viewing.cover&&page==0
             val columns=if(singleCover)1 else mode
             val count=minOf(columns,pageCount-page)
-            val gap=if(columns==2)UiStyle(this@PdfActivity).dp(6)else 0
+            val gap=if(columns==2)(UiStyle(this@PdfActivity).dp(6)*if(viewing.scrolling)zoom else 1f).toInt()else 0
             repeat(count) { offset ->
                 val index = page + offset
-                val width = ((parent.width-gap) / columns).coerceAtLeast(1)
-                val renderWidth = (((((width * if (mode == 1 && !viewing.scrolling) zoom else 1f).toInt()) + 127) / 128) * 128).coerceAtMost(2560)
+                val width = (((horizontal.width*if(viewing.scrolling)zoom else 1f).toInt()-gap) / columns).coerceAtLeast(1)
+                val renderWidth = (((((width * if (!viewing.scrolling) zoom else 1f).toInt()) + 127) / 128) * 128).coerceAtMost(2560)
                 val key = "$index:$renderWidth"
                 val generation = renderGeneration
                 val image = object : ImageView(this@PdfActivity) {
@@ -1495,6 +1824,7 @@ class PdfActivity : Activity() {
                     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
                         super.onSizeChanged(w,h,oldw,oldh)
                         if(columns==2)applySpreadMatrix(this,offset==0)
+                        else if(!viewing.scrolling)applyPageMatrix(this)
                     }
                     override fun onDraw(canvas: Canvas) {
                         super.onDraw(canvas)
@@ -1514,16 +1844,16 @@ class PdfActivity : Activity() {
                     setTag(R.id.pdf_page_index, index)
                     scaleType = if (columns==2||mode == 1 && !viewing.scrolling) ImageView.ScaleType.MATRIX else ImageView.ScaleType.FIT_CENTER
                     tag = key
+                    previous[index]?.let {setImageDrawable(it)}
                     layoutParams = LinearLayout.LayoutParams(width, row.layoutParams.height)
                 }
                 if(offset>0)row.addView(View(this@PdfActivity),LinearLayout.LayoutParams(gap,1))
                 row.addView(image)
                 fun display(bitmap: Bitmap) {
-                    val height = row.layoutParams.height
-                    image.layoutParams = LinearLayout.LayoutParams(width, height)
                     image.setImageBitmap(bitmap)
                     if(columns==2)image.post {if(image.parent===row)applySpreadMatrix(image,offset==0)}
-                    if (mode == 1 && !viewing.scrolling) image.post { if (image.parent === row) applyPageMatrix(image) }
+                    if (!viewing.scrolling) image.post { if (image.parent === row) {if(columns==1)applyPageMatrix(image);applyPagedTransform()} }
+                    if(previewPage==null&&offset==0)prefetchPageTurns()
                     if (pendingTarget == index) {
                         val generation = navigationGeneration
                         pendingTarget = null
@@ -1549,7 +1879,7 @@ class PdfActivity : Activity() {
             }
             if(count<columns){
                 row.addView(View(this@PdfActivity),LinearLayout.LayoutParams(gap,1))
-                row.addView(View(this@PdfActivity),LinearLayout.LayoutParams((parent.width-gap)/columns,1))
+                row.addView(View(this@PdfActivity),LinearLayout.LayoutParams(((horizontal.width*if(viewing.scrolling)zoom else 1f).toInt()-gap)/columns,1))
             }
             return row
         }
@@ -1557,7 +1887,7 @@ class PdfActivity : Activity() {
 
     @Deprecated("Android Activity의 구성 변경 상태 유지")
     override fun onRetainNonConfigurationInstance(): Any? =
-        ViewerSession(inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession, wordSnapshot)
+        ViewerSession(inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession, wordSnapshot,inkClipboard)
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("inkToolsCollapsed",inkCollapsed)
@@ -1580,6 +1910,10 @@ class PdfActivity : Activity() {
 
     override fun onDestroy() {
         closed = true
+        lassoHold?.let(horizontal::removeCallbacks);inkContextMenu?.dismiss();inkClipboard=null
+        pageTurnAnimator?.let {it.removeAllListeners();it.cancel()};pageVelocity?.recycle();pageVelocity=null
+        horizontal.animate().cancel();documentMotionGeneration++
+        clearInkInput()
         thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
         inkPanel.animation?.setAnimationListener(null);inkPanel.clearAnimation()
         pageOverview?.dismiss()

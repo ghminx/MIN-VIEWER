@@ -7,6 +7,15 @@ export const node=(xml,label)=>xml.match(new RegExp(`<node[^>]*(?:text|content-d
 export const box=value=>value?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);
 
 /** 명시적 기기 선택과 덤프 실패·설정 복원 계약을 공유하는 실제 UI 시험 도구. */
+export function waitForHeld(child) {
+    return new Promise((resolve,reject)=>{
+        let held=false,output='';
+        child.stdout.on('data',chunk=>{output+=chunk.toString();if(output.includes('GESTURE_HELD')){held=true;resolve();}});
+        child.on('error',reject);
+        child.on('exit',code=>{if(!held)reject(Error(`제스처 유지 지점 도달 전 종료: ${code}`));});
+    });
+}
+
 export function createDevice({serial,physical=false,dumpPath='/sdcard/min-test.xml',attempts=30},execute=execFileSync) {
     assert.ok(serial && (/^emulator-\d+$/.test(serial) || physical), '실기기는 명시적 serial과 opt-in 필요');
     const run=(...args)=>execute('.research/sdk/platform-tools/adb.exe',['-s',serial,...args],{

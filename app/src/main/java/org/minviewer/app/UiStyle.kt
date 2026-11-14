@@ -168,7 +168,7 @@ internal object UiIcon {
             "추가" -> {line(12f,4f,12f,20f);line(4f,12f,20f,12f)}
             "닫기", "선택 해제" -> {line(6f,6f,18f,18f);line(6f,18f,18f,6f)}
             "뒤로" -> {path(14f,5f,7f,12f,14f,19f);line(7f,12f,21f,12f)}
-            "복사" -> {canvas.drawRoundRect(8f,8f,21f,21f,2f,2f,paint);path(16f,5f,16f,3f,3f,3f,3f,16f,5f,16f)}
+            "복사", "복제" -> {canvas.drawRoundRect(8f,8f,21f,21f,2f,2f,paint);path(16f,5f,16f,3f,3f,3f,3f,16f,5f,16f)}
             "선택 삭제" -> {path(5f,6f,19f,6f,18f,21f,6f,21f,5f,6f);line(3f,6f,21f,6f);path(8f,5f,8f,2f,16f,2f,16f,5f)}
             "크기 조절" -> {path(3f,9f,3f,3f,9f,3f);path(15f,21f,21f,21f,21f,15f);line(3f,3f,9f,9f);line(15f,15f,21f,21f)}
             else -> for(y in listOf(5f,12f,19f))canvas.drawCircle(12f,y,1f,paint)
