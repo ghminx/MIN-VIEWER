@@ -4,14 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const adb = '.research/sdk/platform-tools/adb.exe';
-const run = (...args) => execFileSync(adb, args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+const run = (...args) => execFileSync(adb, ['-s','emulator-5554',...args], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 assert.match(run('get-serialno').trim(), /^emulator-\d+$/);
-const files = run('shell', 'run-as', 'org.minviewer.app', 'ls', 'files');
-if (files.split(/\s+/).includes('user-fonts')) {
-    const fonts = run('shell', 'run-as', 'org.minviewer.app', 'ls', 'files/user-fonts');
-    assert.equal(fonts.trim(), '', '사용자 글꼴이 없는 에뮬레이터에서만 실행');
-}
-
 const create = "import sys; sys.path.insert(0,'.research/py'); from docx import Document; d=Document(); r=d.add_paragraph().add_run('한글 양식 분석 → 다음 단계'); r.font.name='Malgun Gothic'; d.save('.research/office-test/font-fallback-test.docx')";
 mkdirSync('.research/office-test', { recursive: true });
 execFileSync('python', ['-c', create]);

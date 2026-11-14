@@ -19,17 +19,10 @@ let hwpActiveObserver;
 let hwpSearchState;
 let hwpHighlights = [];
 let hwpLayoutGeneration = 0;
-let userFonts = [];
-
-window.setUserFonts = fonts => { userFonts = fonts; };
-
-function userFontStyles() {
-    return userFonts.flatMap(font => font.families.map(family =>
-        `@font-face{font-family:${JSON.stringify(family)};src:url("https://appassets.androidplatform.net/user-fonts/${font.id}");font-weight:${font.weight};font-style:${font.italic ? 'italic' : 'normal'}}`
-    )).join('');
-}
+let previewRequested = false;
 
 window.resetDocument = () => {
+    previewRequested = false;
     sequence++;
     hwpLayoutGeneration++;
     hwpObserver?.disconnect();
@@ -53,15 +46,13 @@ window.resetDocument = () => {
     status.textContent = '문서를 불러오는 중입니다.';
 };
 
-function hwpFrame(index) {
+function hwpSvg(index, includeHighlights = true) {
     const output = documentHandle.renderPageSvg(index);
     const parsed = new DOMParser().parseFromString(output, 'image/svg+xml');
     if (parsed.querySelector('parsererror')) throw new Error('SVG 표시 실패');
     const svg = parsed.documentElement;
     const equationText = Array.from(svg.querySelectorAll('text[font-family="HyhwpEQ"]'));
-    const hasEquationFont = userFonts.some(font => font.families.some(family => family.toLowerCase() === 'hyhwpeq'));
     for (const element of equationText) {
-        if (hasEquationFont) break;
         if (element.children.length) continue;
         const result = substituteEquationGlyphs(element.textContent);
         if (!result.replaced) continue;
@@ -69,17 +60,59 @@ function hwpFrame(index) {
         element.setAttribute('font-family', 'serif');
         if (result.italic) element.setAttribute('font-style', 'italic');
     }
-    for (const rect of hwpHighlights.filter(item => item.pageIndex === index)) {
+    for (const rect of includeHighlights ? hwpHighlights.filter(item => item.pageIndex === index) : []) {
         const mark = parsed.createElementNS('http://www.w3.org/2000/svg', 'rect');
         for (const key of ['x', 'y', 'width', 'height']) mark.setAttribute(key, String(rect[key]));
         mark.setAttribute('fill', '#ffd200');
         mark.setAttribute('fill-opacity', '0.45');
         svg.appendChild(mark);
     }
+    return svg;
+}
+
+window.renderHwpThumbnail = (index, generation) => {
+    if (!documentHandle || generation !== activeGeneration || !Number.isInteger(index) || index < 0 || index >= views.length) return;
+    try {
+        const svg = hwpSvg(index, false);
+        const info = JSON.parse(documentHandle.getPageInfo(index));
+        const scale = Math.min(180 / info.width, 480 / info.height);
+        const width = Math.max(1, Math.floor(info.width * scale));
+        const height = Math.max(1, Math.floor(info.height * scale));
+        if (!svg.hasAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${svg.width.baseVal.value} ${svg.height.baseVal.value}`);
+        svg.setAttribute('width', String(width));
+        svg.setAttribute('height', String(height));
+        const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], {type: 'image/svg+xml'}));
+        const image = new Image();
+        image.onerror = () => { URL.revokeObjectURL(url); window.Android.onThumbnailError(index,generation); };
+        image.onload = () => {
+            try {
+                if (!documentHandle || generation !== activeGeneration) return;
+                const canvas = document.createElement('canvas');
+                canvas.width = width; canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = 'white'; ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(image, 0, 0, width, height);
+                window.Android.onThumbnail(canvas.toDataURL('image/png').split(',')[1], index, generation);
+            } catch (_) { window.Android.onThumbnailError(index,generation); }
+            finally { URL.revokeObjectURL(url); }
+        };
+        image.src = url;
+    } catch (_) { window.Android.onThumbnailError(index,generation); }
+};
+
+function hwpFrame(index) {
+    const svg = hwpSvg(index);
+    const generation = activeGeneration;
     const frame = document.createElement('iframe');
+    frame.onload = () => {
+        if (!previewRequested && generation === activeGeneration && documentHandle) {
+            previewRequested = true;
+            setTimeout(() => { if (generation === activeGeneration && documentHandle) window.renderHwpThumbnail(0,generation); }, 0);
+        }
+    };
     frame.setAttribute('sandbox', '');
     frame.title = `문서 ${index + 1}쪽`;
-    frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src https://appassets.androidplatform.net"><style>${userFontStyles()}body{margin:0}svg{display:block;width:100%;height:auto}</style>${new XMLSerializer().serializeToString(svg)}`;
+    frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';"><style>body{margin:0}svg{display:block;width:100%;height:auto}</style>${new XMLSerializer().serializeToString(svg)}`;
     return frame;
 }
 
@@ -228,6 +261,12 @@ window.nextHwpResult = () => {
     return hwpMatchResult(hwpSearchState.matches[hwpSearchState.index], hwpSearchState.index + 1, hwpSearchState.matches.length, true);
 };
 
+window.clearHwpSearch = () => {
+    hwpSearchState = undefined;
+    setHwpHighlights([]);
+    if (hwpMode === 'single') window.showPage(hwpCurrentPage);
+};
+
 window.showHwpSearchResult = index => {
     window.showPage(index);
     const rect = hwpHighlights.find(item => item.pageIndex === index);
@@ -275,6 +314,7 @@ window.openDocument = async (url, name, generation, password = null) => {
             throw new Error('표시할 페이지가 없습니다.');
         }
         documentHandle = handle;
+        previewRequested = false;
         activeGeneration = generation;
         views = availableViews;
         window.Android.onOpened(views.length, generation);

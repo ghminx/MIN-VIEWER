@@ -13,7 +13,7 @@ object ThemePreferences {
     }
 
     fun apply(activity: Activity) {
-        activity.setTheme(if (isDark(activity)) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
+        activity.setTheme(if (isDark(activity)) R.style.MinViewerDark else R.style.MinViewerLight)
     }
 
     fun selected(activity: Activity) = when (mode(activity)) { "light" -> 1; "dark" -> 2; else -> 0 }

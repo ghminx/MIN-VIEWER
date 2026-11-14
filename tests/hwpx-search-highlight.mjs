@@ -36,7 +36,7 @@ run('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-t', 'applicati
     '-d', `content://media/external/file/${id}`, '-f', '1', '-p', 'org.minviewer.app');
 let xml = await waitFor(/1 \/ 46/);
 tap(xml, 'content-desc', '검색');
-await waitFor(/한글 문서 검색/);
+await waitFor(/문서 검색어/);
 run('shell', 'input', 'text', '3');
 xml = await waitFor(/text="찾기"/);
 tap(xml, 'text', '찾기');
@@ -52,7 +52,7 @@ xml = await waitFor(/text="두쪽 보기"/);
 tap(xml, 'text', '두쪽 보기');
 xml = await waitFor(/1 \/ 46/);
 tap(xml, 'content-desc', '검색');
-await waitFor(/한글 문서 검색/);
+await waitFor(/문서 검색어/);
 run('shell', 'input', 'text', '3');
 xml = await waitFor(/text="찾기"/);
 tap(xml, 'text', '찾기');
@@ -64,7 +64,7 @@ const checkSpread = "import sys; sys.path.insert(0,'.research/py'); from PIL imp
 execFileSync('python', ['-c', checkSpread, '.research/hwp-test/hwpx-highlight-spread.png']);
 xml = screen();
 tap(xml, 'content-desc', '검색');
-await waitFor(/한글 문서 검색/);
+await waitFor(/문서 검색어/);
 run('shell', 'input', 'text', 'NOTPRESENT');
 xml = await waitFor(/text="찾기"/);
 tap(xml, 'text', '찾기');

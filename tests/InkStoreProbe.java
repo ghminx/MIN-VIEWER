@@ -20,6 +20,15 @@ public class InkStoreProbe {
         try{store.save(new PdfInkNote(note.getId(),note.getName(),2,Arrays.asList(new InkStroke(3,.004f,0,stroke.getPoints()))));}catch(IllegalArgumentException expected){rejected=true;}
         check(rejected,"invalid page accepted");check(store.load(note.getId()).equals(saved),"invalid stroke replaced saved data");
         check(Arrays.equals(original,java.nio.file.Files.readAllBytes(store.original(note.getId()).toPath())),"original changed");
+        InkStroke marker=new InkStroke(0,.02f,0x60ffd700,stroke.getPoints(),"highlighter");
+        PdfInkNote marked=new PdfInkNote(note.getId(),note.getName(),2,Arrays.asList(stroke,marker));
+        store.save(marked);check(store.load(note.getId()).equals(marked),"highlighter style lost");
+        PdfInkNote legacy=store.create(new ByteArrayInputStream(original),"legacy.pdf",1);
+        String fixture="{\"version\":1,\"name\":\"legacy.pdf\",\"pages\":1,\"strokes\":[{\"page\":0,\"width\":0.004,\"color\":-65536,\"points\":[[0.2,0.3,0.7,100]]}]}";
+        java.nio.file.Files.write(new File(root,legacy.getId()+"/note.json").toPath(),fixture.getBytes("UTF-8"));
+        PdfInkNote restored=store.load(legacy.getId());check(restored.getStrokes().get(0).getTool().equals("pen"),"legacy pen migration failed");
+        store.save(restored);check(store.load(legacy.getId()).equals(restored),"legacy resave failed");
         System.out.println("INK_RESTORE_WRITE_FAILURE_INVALID_PAGE_ORIGINAL_PASS");
+        System.out.println("HIGHLIGHTER_STYLE_LEGACY_MIGRATION_PASS");
     }
 }

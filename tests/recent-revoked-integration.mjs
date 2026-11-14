@@ -55,7 +55,7 @@ for (const [source, name, opened] of [
     xml = await waitFor(new RegExp(`content-desc="${name} 목록에서 삭제"`));
     tap(xml, 'content-desc', `${name} 목록에서 삭제`);
     xml = await waitFor(/최근 문서 목록에서 삭제할까요/);
-    tap(xml, 'text', '삭제');
+    tap(xml, 'text', '기록 지우기');
     run('shell', 'rm', `/sdcard/Download/${name}`);
     console.log(`${name}: 파일을 유지한 상태의 지속 읽기 권한 해제 및 재선택 안내 확인`);
 }

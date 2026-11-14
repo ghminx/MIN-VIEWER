@@ -81,3 +81,19 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 4. 최종 WASM은 wasm-bindgen과 최적화 과정을 거치므로 재현 링크 맵에 나온 108개 아카이브가 최종 파일에 모두 남았다고 단정하지 않음.
 
 현재 베타 릴리스의 라이선스 준수 검토는 완료되지 않았으며 법률적 최종 판단은 별도로 필요함.
+
+## 미배포 PDF 필기 출력 의존성
+
+- PDF 사본 출력에 `com.tom-roush:pdfbox-android:2.0.27.0`을 추가함. 공개 v1.0.5 APK의 변경은 수행하지 않음.
+- 공식 [태그의 LICENSE·NOTICE](https://github.com/TomRoush/PdfBox-Android/tree/v2.0.27.0)를 보관함. Apache 2.0, PDFBox·FontBox 및 Adobe 글꼴 자료의 포함 조건을 함께 기록함. 선택적 BouncyCastle 라이브러리는 제외함.
+- AAR의 `LiberationSans-Regular.ttf` 이름 테이블에서 버전 2.1.5와 SIL Open Font License 1.1 표기를 확인하고 [해당 버전의 글꼴 라이선스](https://github.com/liberationfonts/liberation-fonts/blob/2.1.5/LICENSE)를 포함함. 새 글꼴을 문서 원본의 글꼴 대신 적용하지 않음.
+- Unicode Scripts 등 문자 자료의 고지와 라이선스를 포함하고 앱의 PDFBox 고지 화면에 합쳐 제공함. 고지 원문은 `app/src/main/assets/licenses/pdfbox/`에 보관함.
+- AAR은 변경하지 않았으며 정확한 해시·출처·크기 측정과 시험 범위는 `ANNOTATION_PLAN.md` 12절을 따름. 기존 LibreOffice·Rust 구성 요소에 대한 이전의 미검증 사항은 별도로 유지함.
+
+## 미배포 UI 글꼴
+
+- [Pretendard v1.3.9 공식 배포 소스](https://github.com/orioncactus/pretendard/tree/v1.3.9/packages/pretendard/dist/public/static)의 Regular·SemiBold OTF를 수정 없이 포함함. 앱 UI에만 적용하고 문서 렌더링의 대체 글꼴로 등록하지 않음.
+- [원본 라이선스](https://github.com/orioncactus/pretendard/blob/v1.3.9/LICENSE)는 SIL OFL 1.1이며 저작권·Reserved Font Name 고지를 `app/src/main/assets/licenses/pretendard.txt`와 앱의 라이선스 메뉴에 포함함. 글꼴 자체 판매나 변형·이름 변경은 수행하지 않음.
+- Regular SHA-256: `3ffbacde6ab8411f1d2db54bb9b1f0b3ee2a738932033722cf0388c06aed1c93`.
+- SemiBold SHA-256: `c89bc43027dc7cde5726e96223376f8eec09302b2fc1f8147fd5b57cfc376118`.
+- 두 글꼴의 원본 합계는 3,158,056바이트임. 향후 공개 APK 배포 시 이 고지·글꼴을 함께 포함해야 하며 현재 공개 v1.0.5 파일은 갱신하지 않음.

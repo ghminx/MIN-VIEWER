@@ -30,7 +30,7 @@ console.log('PDF 필기 입력·저장 완료 화면 확인');
 run('shell','input','keyevent','BACK');await delay(300);
 run('shell','am','force-stop','org.minviewer.app');
 run('shell','am','start','-n','org.minviewer.app/.MainActivity');
-xml=await waitFor(/\[필기\] min-ink.pdf/);tap(xml,'\\[필기\\] min-ink.pdf');
+xml=await waitFor(/min-ink.pdf/);tap(xml,'min-ink.pdf');
 await waitFor(/필기 복원 완료/);
 run('shell','screencap','-p','/sdcard/min-ink-restored.png');run('pull','/sdcard/min-ink-restored.png','.research/pdf-ink-test/restored.png');
 execFileSync('python',['-c',"import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');assert sum(r>180 and g<100 and b<100 for r,g,b in im.getdata())>100",'.research/pdf-ink-test/restored.png']);

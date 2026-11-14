@@ -84,7 +84,7 @@ const search = xml.match(/text="검색"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)
 assert.ok(search);
 tap(search);
 xml = screen();
-assert.match(xml, /한글 문서 검색/);
+assert.match(xml, /문서 검색어/);
 for (const character of '2020') {
     run('shell', 'input', 'text', character);
     await delay(250);
@@ -122,7 +122,7 @@ const searchCell = xml.match(/text="검색"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(
 assert.ok(searchCell);
 tap(searchCell);
 xml = screen();
-assert.match(xml, /한글 문서 검색/);
+assert.match(xml, /문서 검색어/);
 for (const character of '2021') {
     run('shell', 'input', 'text', character);
     await delay(250);

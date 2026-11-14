@@ -9,7 +9,6 @@ import android.view.ViewGroup
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.widget.BaseAdapter
-import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -17,9 +16,6 @@ import android.widget.AbsListView
 import android.widget.TextView
 import android.widget.EditText
 import android.text.InputType
-import android.text.TextUtils
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.Gravity
 import java.io.BufferedInputStream
 import java.io.IOException
@@ -39,9 +35,8 @@ class CsvActivity : Activity() {
     private lateinit var list: ListView
     private lateinit var scroller: HorizontalScrollView
     private lateinit var scaleDetector: ScaleGestureDetector
-    private lateinit var previous: Button
-    private lateinit var next: Button
-    private lateinit var encodingButton: Button
+    private lateinit var controls: ViewerControls
+    private var canLoadNext = false
     private var page = 0
     private var encoding: String? = null
     private var zoom = 1f
@@ -72,76 +67,13 @@ class CsvActivity : Activity() {
         zoom = (savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)).coerceIn(1f, 4f)
         encoding = savedInstanceState?.getString("encoding") ?: intent.getStringExtra("restore_encoding")
             ?.takeIf { it == "UTF-8" || it == "CP949" }
-        val toolbar = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.rgb(25, 45, 77))
-        }
-        val bottom = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.rgb(25, 45, 77))
-        }
-        fun addButton(parent: LinearLayout, label: String, action: () -> Unit): Button = Button(this).apply {
-            text = label
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.TRANSPARENT)
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(0, 0, 0, 0)
-            setOnClickListener { action() }
-            parent.addView(this, LinearLayout.LayoutParams((56 * resources.displayMetrics.density).toInt(),
-                (48 * resources.displayMetrics.density).toInt()))
-        }
-        addButton(toolbar, "뒤로") { finish() }
-        toolbar.addView(TextView(this).apply {
-            text = intent.getStringExtra("name") ?: intent.data?.lastPathSegment ?: "CSV 문서"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        addButton(toolbar, "이동") {
-            val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; hint = "행 번호" }
-            android.app.AlertDialog.Builder(this).setTitle("행으로 이동").setView(input)
-                .setNegativeButton("취소", null).setPositiveButton("확인") { _, _ ->
-                    val row = input.text.toString().toLongOrNull()
-                    if (row == null || row !in 1..Int.MAX_VALUE.toLong()) {
-                        status.text = "CSV 오류: 1 이상의 행 번호를 입력해 주세요."
-                    } else loadPage(((row - 1) / PAGE_SIZE).toInt(), ((row - 1) % PAGE_SIZE).toInt())
-                }.show()
-        }
-        encodingButton = addButton(toolbar, "인코딩") {
-            val options = arrayOf("UTF-8", "CP949")
-            android.app.AlertDialog.Builder(this).setTitle("문자 인코딩").setItems(options) { _, index ->
-                encoding = options[index]
-                loadPage(0)
-            }.show()
-        }
-        status = TextView(this).apply {
-            text = "CSV를 불러오는 중입니다."
-            textSize = 12f
-            gravity = Gravity.CENTER
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(Color.WHITE)
-        }
-        val notice = TextView(this).apply {
-            visibility = View.GONE
-            setPadding(12, 8, 12, 8)
-        }
-        status.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val error = s?.toString()?.startsWith("CSV 오류:") == true
-                notice.text = if (error) s else ""
-                notice.visibility = if (error) View.VISIBLE else View.GONE
-            }
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
-        previous = addButton(bottom, "이전") { if (page > 0) loadPage(page - 1) }
-        bottom.addView(status, LinearLayout.LayoutParams(0, (48 * resources.displayMetrics.density).toInt(), 1f))
-        next = addButton(bottom, "다음") { loadPage(page + 1) }
+        controls = ViewerControls(this, intent.getStringExtra("name") ?: "CSV 문서", { finish() }, null,
+            { showRowJump() }, { if(page>0)loadPage(page-1) }, {loadPage(page+1)},
+            {zoomFromButton(1/1.5f)}, {zoomFromButton(1.5f)},
+            listOf("행으로 이동" to {showRowJump()}, "문자 인코딩" to {showEncoding()}), enabledMenuItem={name->!loading&&when(name){"이전 페이지"->page>0;"다음 페이지"->canLoadNext;else->true}},onFit={zoomFromButton(1f/zoom)})
+        controls.listButton.contentDescription="행으로 이동"
+        controls.setLocationAction("행으로 이동"){showRowJump()}
+        status=controls.status
         list = ListView(this).apply {
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView?, state: Int) {
@@ -159,8 +91,7 @@ class CsvActivity : Activity() {
                     val currentPage = windowStartPage + first / PAGE_SIZE
                     if (currentPage != page) {
                         page = currentPage
-                        previous.isEnabled = page > 0
-                        next.isEnabled = page < windowEndPage || windowHasNext
+                        canLoadNext = page < windowEndPage || windowHasNext
                         updateRangeStatus()
                         saveView()
                     }
@@ -217,12 +148,36 @@ class CsvActivity : Activity() {
                 view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
                 insets
             }
-            addView(toolbar)
-            addView(notice)
+            addView(controls)
             addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(bottom)
         })
         loadPage(page)
+    }
+
+    private fun showRowJump() {
+        if(loading)return
+        val ui=UiStyle(this)
+        val root=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;setPadding(ui.dp(24),ui.dp(8),ui.dp(24),ui.dp(8))}
+        root.addView(ui.label("행 번호",14f,true))
+        val input=EditText(this).apply {inputType=InputType.TYPE_CLASS_NUMBER;contentDescription="행 번호";setSingleLine();minimumHeight=ui.dp(48)}
+        root.addView(input,LinearLayout.LayoutParams(-1,-2))
+        val error=ui.label("",12f,color=ui.danger).apply {visibility=View.GONE;setPadding(0,ui.dp(8),0,0)}
+        root.addView(error)
+        val dialog=android.app.AlertDialog.Builder(this).setTitle("행으로 이동").setView(root)
+            .setNegativeButton("취소",null).setPositiveButton("이동",null).create()
+        dialog.setOnShowListener {dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val row=input.text.toString().toLongOrNull()
+            if(row==null||row !in 1..Int.MAX_VALUE.toLong()) {
+                error.text="1 이상의 행 번호를 입력해 주세요.";error.visibility=View.VISIBLE;input.requestFocus()
+            } else {dialog.dismiss();loadPage(((row-1)/PAGE_SIZE).toInt(),((row-1)%PAGE_SIZE).toInt())}
+        }}
+        dialog.show();input.requestFocus()
+    }
+
+    private fun showEncoding() {
+        if(loading)return
+        val options=arrayOf("UTF-8","CP949")
+        android.app.AlertDialog.Builder(this).setTitle("문자 인코딩").setItems(options){_,index->encoding=options[index];loadPage(0)}.show()
     }
 
     private fun loadPage(index: Int, rowInPage: Int = 0, direction: Int = 0) {
@@ -230,10 +185,8 @@ class CsvActivity : Activity() {
         if (loading) return
         loading = true
         val request = ++generation
-        val previousHasNext = next.isEnabled
-        previous.isEnabled = false
-        next.isEnabled = false
-        encodingButton.isEnabled = false
+        val previousHasNext = canLoadNext
+        canLoadNext = false
         if (direction == 0) status.text = "CSV를 불러오는 중입니다."
         val selectedEncoding = encoding
         worker.execute {
@@ -277,9 +230,7 @@ class CsvActivity : Activity() {
                         loading = false
                         if ((index > 0 && rows.isEmpty()) || (rows.isNotEmpty() && rowInPage >= rows.size)) {
                             status.text = "CSV 오류: 해당 행이 없습니다."
-                            previous.isEnabled = page > 0
-                            next.isEnabled = previousHasNext
-                            encodingButton.isEnabled = true
+                            canLoadNext = previousHasNext
                             return@runOnUiThread
                         }
                         encoding = charset
@@ -326,9 +277,7 @@ class CsvActivity : Activity() {
                         restorePosition?.let { list.setSelectionFromTop(it, top) }
                         saveView()
                         setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
-                        previous.isEnabled = page > 0
-                        next.isEnabled = page < windowEndPage || windowHasNext
-                        encodingButton.isEnabled = true
+                        canLoadNext = page < windowEndPage || windowHasNext
                         updateRangeStatus()
                         if (direction == 0 && rowInPage >= PAGE_SIZE - 10 && windowHasNext) {
                             list.post { if (!loading && windowEndPage == index && windowHasNext) loadPage(index + 1, direction = 1) }
@@ -345,8 +294,6 @@ class CsvActivity : Activity() {
                             "문자 인코딩을 확인하고 UTF-8 또는 CP949를 선택해 주세요."
                         } else error.message ?: "파일을 읽을 수 없습니다."
                         status.text = "CSV 오류: $message"
-                        encodingButton.isEnabled = true
-                        previous.isEnabled = page > 0
                     }
                 }
             }
@@ -451,6 +398,12 @@ class CsvActivity : Activity() {
     private fun applyZoom() {
         list.layoutParams = android.widget.FrameLayout.LayoutParams(maxOf(scroller.width, columns * cellWidth()), -1)
         (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
+    }
+
+    private fun zoomFromButton(factor:Float) {
+        val location=IntArray(2);scroller.getLocationInWindow(location)
+        val x=location[0]+scroller.width/2f;val y=location[1]+scroller.height/2f
+        setZoom(zoom*factor,x,y,x,y)
     }
 
     private fun setZoom(value: Float, focusX: Float, focusY: Float, targetX: Float, targetY: Float) {

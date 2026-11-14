@@ -26,4 +26,7 @@ try {
     Run $adb @('push',"$work/store-probe.jar",'/data/local/tmp/min-ink-store-probe.jar')
     Run $adb @('shell','CLASSPATH=/data/local/tmp/min-ink-target.apk:/data/local/tmp/min-ink-store-probe.jar app_process /system/bin InkStoreProbe /data/local/tmp/min-ink-store-test')
     Run 'node' @('tests/pdf-ink-integration.mjs')
+    Run 'node' @('tests/pdf-ink-tools-integration.mjs')
+    Run 'node' @('tests/pdf-stylus-button-integration.mjs')
+    Run 'node' @('tests/pdf-ink-lasso-integration.mjs')
 } finally { Pop-Location }

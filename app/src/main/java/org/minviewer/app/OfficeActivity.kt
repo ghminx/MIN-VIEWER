@@ -19,11 +19,8 @@ import android.view.ViewGroup
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.Gravity
-import android.widget.Button
 import android.widget.CheckedTextView
 import android.widget.ImageView
-import android.widget.EditText
-import android.text.InputType
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.AbsListView
@@ -102,10 +99,30 @@ class OfficeActivity : Activity() {
     private var swipeAnimationDirection = 0
     private var touchInDocument = false
     private lateinit var scaleDetector: ScaleGestureDetector
+    private val tapDetector by lazy {
+        android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
+            override fun onSingleTapConfirmed(event:MotionEvent):Boolean {
+                if(closed||documentType==Document.DOCTYPE_SPREADSHEET||zoom>1f)return false
+                val location=IntArray(2);viewport.getLocationOnScreen(location)
+                val x=event.rawX-location[0]
+                val direction=ViewerControls.pageTapDirection(x,viewport.width)
+                if(direction!=0&&pageIndex+direction in 0 until pageCount){
+                    swipeAnimationTarget=pageIndex+direction;swipeAnimationDirection=direction
+                    showPage(pageIndex+direction)
+                }
+                return true
+            }
+            override fun onDoubleTap(event:MotionEvent):Boolean {
+                setZoom(if(zoom>1f)1f else 2f,event.rawX,event.rawY)
+                return true
+            }
+        })
+    }
     private var pageLimit = " · 시험용"
     private var searchMessage = ""
     private var searchQuery = ""
     @Volatile private var searchPending = false
+    @Volatile private var searchDismissed = false
     @Volatile private var searchResultReceived = false
     @Volatile private var searchFallbackAttempted = false
     @Volatile private var searchFallbackScheduled = false
@@ -115,12 +132,14 @@ class OfficeActivity : Activity() {
     private var highlightPage = -1
     private var highlight: IntArray? = null
     private var pages = emptyList<IntArray>()
+    private var previewRecorded = false
     private var sheetNames = emptyList<String>()
     private var tilePixels: ByteBuffer? = null
     @Volatile private var closed = false
     private var passwordLatch: CountDownLatch? = null
     private var passwordAttempts = 0
     private var openedSuccessfully = false
+    private lateinit var controls: ViewerControls
     private var recentRegistered = false
     private var lastSavedView: ViewPosition? = null
 
@@ -135,7 +154,7 @@ class OfficeActivity : Activity() {
         viewportY = savedInstanceState?.getInt("viewportY") ?: intent.getIntExtra("restore_y", 0)
         zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         restoreSlidePanel = savedInstanceState?.getBoolean("slidePanel") ?: false
-        val controls = ViewerControls(this, intent.getStringExtra("name") ?: "문서", { finish() }, { searchDocument() },
+        controls = ViewerControls(this, intent.getStringExtra("name") ?: "문서", { finish() }, { searchDocument() },
             {
                 when (documentType) {
                     Document.DOCTYPE_SPREADSHEET -> showSheetList()
@@ -144,8 +163,10 @@ class OfficeActivity : Activity() {
                 }
             },
             { showPage(pageIndex - 1) }, { showPage(pageIndex + 1) },
-            { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) }, listOf("다음 검색 결과" to { searchNext() }))
+            { setZoom(zoom / 1.5f) }, { setZoom(zoom * 1.5f) }, listOf("다음 검색 결과" to { searchNext() }),
+            enabledMenuItem={name->when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;"이전 페이지"->pageIndex>0;"다음 페이지"->pageIndex<pageCount-1;else->openedSuccessfully}},onFit={setZoom(1f)})
         status = controls.status
+        controls.setLocationAction {if(documentType==Document.DOCTYPE_SPREADSHEET)showSheetList()else controls.showPageJump(pageIndex,pageCount){showPage(it)}}
         slideList = controls.listButton.apply { visibility = View.GONE }
         scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
@@ -301,7 +322,6 @@ class OfficeActivity : Activity() {
             }
             addView(controls)
             addView(contentRow, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(controls.takeBottom())
         })
         val uri = intent.data
         val extension = intent.getStringExtra("name")?.substringAfterLast('.', "")?.lowercase()
@@ -349,7 +369,7 @@ class OfficeActivity : Activity() {
                     if (!engineCache.mkdirs()) throw IOException("엔진 캐시를 만들 수 없습니다.")
                     engineCachePrepared = true
                 }
-                configureUserFonts()
+                configureFontFallback()
                 LibreOfficeKit.init(this)
                 val handle = LibreOfficeKit.getLibreOfficeKitHandle() ?: throw IOException("엔진을 시작할 수 없습니다.")
                 val office = Office(handle)
@@ -396,14 +416,14 @@ class OfficeActivity : Activity() {
                 }
                 if (!closed && documentType == Document.DOCTYPE_SPREADSHEET) runOnUiThread {
                     if (!closed) {
-                        slideList.text = "시트"
+                        slideList.text = ""
                         slideList.contentDescription = "시트 목록"
                         slideList.visibility = View.VISIBLE
                     }
                 }
                 if (!closed && documentType == Document.DOCTYPE_TEXT && pages.isNotEmpty()) runOnUiThread {
                     if (!closed) {
-                        slideList.text = "페이지"
+                        slideList.text = ""
                         slideList.contentDescription = "페이지 목록"
                         slideList.visibility = View.VISIBLE
                     }
@@ -424,6 +444,7 @@ class OfficeActivity : Activity() {
                 event.rawY >= location[1] && event.rawY < location[1] + viewport.height
         }
         if (touchInDocument && ::scaleDetector.isInitialized) {
+            if(event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER)tapDetector.onTouchEvent(event)
             scaleDetector.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
                 wasScaling = true
@@ -433,22 +454,17 @@ class OfficeActivity : Activity() {
         return super.dispatchTouchEvent(event)
     }
 
-    private fun configureUserFonts() {
+    private fun configureFontFallback() {
         val engineFonts = File(applicationInfo.dataDir, "user/fonts")
+        // 이전 버전이 생성한 연결만 해제하고 사용자의 글꼴 원본은 보존
         engineFonts.listFiles()?.filter { it.name.matches(Regex("min-user-[0-9a-f]{64}\\.ttf")) }?.forEach {
             if (!it.delete()) throw IOException("이전 사용자 글꼴 연결을 정리할 수 없습니다.")
         }
-        val stored = UserFonts(this)
-        val entries = stored.all()
-        entries.forEach { entry ->
-            android.system.Os.symlink(stored.file(entry.id).absolutePath, File(engineFonts, "min-user-${entry.id}.ttf").absolutePath)
-        }
-        val hasMalgun = entries.any { entry -> entry.families.any { it.equals("Malgun Gothic", true) || it == "맑은 고딕" } }
         val original = assets.open("unpack/etc/fonts/fonts.conf").bufferedReader(Charsets.UTF_8).use { it.readText() }
         val marker = "<fontconfig>"
         if (!original.contains(marker)) throw IOException("엔진 글꼴 설정을 읽을 수 없습니다.")
         val userDirectory = android.text.TextUtils.htmlEncode(engineFonts.absolutePath)
-        val aliases = if (hasMalgun) "" else """
+        val aliases = """
             <alias><family>Malgun Gothic</family><prefer><family>Noto Sans CJK KR</family><family>Noto Sans KR</family></prefer></alias>
             <alias><family>맑은 고딕</family><prefer><family>Noto Sans CJK KR</family><family>Noto Sans KR</family></prefer></alias>
         """.trimIndent()
@@ -469,18 +485,11 @@ class OfficeActivity : Activity() {
             if (closed) {
                 latch.countDown()
             } else {
-                val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
-                AlertDialog.Builder(this).setTitle("문서 비밀번호")
-                    .setMessage(if (retry) "비밀번호가 맞지 않습니다. 다시 입력해 주세요." else "비밀번호를 입력해 주세요.")
-                    .setView(input).setCancelable(false)
-                    .setNegativeButton("취소") { _, _ ->
+                UiStyle(this).passwordDialog("문서 비밀번호",if(retry)"비밀번호가 맞지 않습니다. 다시 입력해 주세요."else null,false,cancel={
                         setResult(RESULT_CANCELED, Intent().putExtra("password_cancelled", true))
                         latch.countDown()
                         finish()
-                    }
-                    .setPositiveButton("열기") { _, _ -> result.set(input.text.toString()); latch.countDown() }
-                    .show()
-                input.requestFocus()
+                    }) {value->result.set(value);latch.countDown()}
             }
         }
         try {
@@ -505,6 +514,11 @@ class OfficeActivity : Activity() {
     override fun finish() {
         saveResult()
         super.finish()
+    }
+
+    @Deprecated("Android 뒤로 이동 처리")
+    override fun onBackPressed() {
+        if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
     }
 
     override fun onStop() {
@@ -635,6 +649,34 @@ class OfficeActivity : Activity() {
                 updateStatus()
             }
         }
+        if(!sheet&&!previewRecorded){
+            previewRecorded=true
+            worker.execute { recordFirstPagePreview() }
+        }
+    }
+
+    private fun recordFirstPagePreview() {
+        if(closed)return
+        val opened=document?:return
+        val uri=intent.data?:return
+        val previousPart=opened.part
+        try {
+            if(documentType!=Document.DOCTYPE_TEXT)opened.setPart(0)
+            val rect=pages.firstOrNull()?:intArrayOf(0,0,Math.toIntExact(opened.documentWidth),Math.toIntExact(opened.documentHeight))
+            if(rect[2]<=0||rect[3]<=0)return
+            val scale=minOf(180f/rect[2],480f/rect[3])
+            val width=(rect[2]*scale).toInt().coerceAtLeast(1)
+            val height=(rect[3]*scale).toInt().coerceAtLeast(1)
+            val pixels=ByteBuffer.allocateDirect(width*height*4)
+            opened.paintTile(pixels,width,height,rect[0],rect[1],rect[2],rect[3])
+            val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
+            pixels.rewind();bitmap.copyPixelsFromBuffer(pixels)
+            DocumentPreviewCache.record(applicationContext,uri,bitmap)
+        } catch(error:RuntimeException) {
+            if(!closed)runOnUiThread {if(!closed)status.text="미리보기 오류: ${error.message}"}
+        } finally {
+            if(documentType!=Document.DOCTYPE_TEXT)opened.setPart(previousPart)
+        }
     }
 
     private fun visibleSize(base: Int, factor: Float, limit: Int): Int =
@@ -691,7 +733,7 @@ class OfficeActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
+        status.text = if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(pageIndex)?:"시트"} · ${pageIndex+1}/$pageCount · ${(zoom*100).toInt()}%"else"${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
         status.contentDescription = "LibreOffice ${pageIndex + 1} / $pageCount$pageLimit · ${(zoom * 100).toInt()}%$searchMessage"
         val uri = intent.data ?: return
         if (!openedSuccessfully) return
@@ -715,9 +757,8 @@ class OfficeActivity : Activity() {
     private fun showSlideList() {
         if (documentType != Document.DOCTYPE_PRESENTATION || pageCount == 0 || slidePanelAnimating) return
         closeSlidePanel?.let { it(); return }
-        val config = resources.configuration
-        val wide = config.screenWidthDp >= 840 ||
-            (config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp)
+        val ui=UiStyle(this)
+        val wide = ui.useSidePanel()
         val active = AtomicBoolean(true)
         val cache = object : LruCache<Int, Bitmap>(4 * 1024 * 1024) {
             override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount
@@ -735,7 +776,7 @@ class OfficeActivity : Activity() {
                 val item = (recycled as? LinearLayout ?: LinearLayout(this@OfficeActivity)).apply {
                     orientation = LinearLayout.VERTICAL
                     contentDescription = "미리보기 ${position + 1}번 슬라이드" + if (position == current) ", 선택됨" else ""
-                    setBackgroundColor(if (position == current) Color.rgb(214, 230, 250) else Color.TRANSPARENT)
+                    background=ui.rounded(if(position==current)ui.selected else ui.background,8)
                     removeAllViews()
                     layoutParams = AbsListView.LayoutParams(-1, ((if (wide) 160 else 116) * resources.displayMetrics.density).toInt())
                 }
@@ -753,8 +794,8 @@ class OfficeActivity : Activity() {
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(-1, 0, 1f))
                 item.addView(TextView(this@OfficeActivity).apply {
-                    text = if (position in failed) "미리보기 실패" else "${position + 1}번"
-                    if (position == current) setTextColor(Color.rgb(25, 45, 77))
+                    text = if (position in failed) "미리보기 실패" else "${position + 1}번"+if(position==current)" · 현재"else""
+                    setTextColor(ui.text)
                     gravity = android.view.Gravity.CENTER
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 })
@@ -802,6 +843,9 @@ class OfficeActivity : Activity() {
             }
         }
         grid = GridView(this).apply {
+            setBackgroundColor(ui.background)
+            setPadding(ui.dp(8),ui.dp(8),ui.dp(8),ui.dp(8))
+            verticalSpacing=ui.dp(8);horizontalSpacing=ui.dp(8)
             contentDescription = "슬라이드 목록"
             numColumns = if (wide) 1 else GridView.AUTO_FIT
             columnWidth = (96 * resources.displayMetrics.density).toInt()
@@ -870,7 +914,7 @@ class OfficeActivity : Activity() {
             isModal = true
             setAdapter(ArrayAdapter(this@OfficeActivity, android.R.layout.simple_list_item_single_choice, sheetNames))
             width = minOf((240 * resources.displayMetrics.density).toInt(), resources.displayMetrics.widthPixels)
-            height = minOf((sheetNames.size * 48 * resources.displayMetrics.density).toInt(), (320 * resources.displayMetrics.density).toInt())
+            height = minOf(((sheetNames.size * 48 + 16) * resources.displayMetrics.density).toInt(), (320 * resources.displayMetrics.density).toInt())
             setOnItemClickListener { _, _, position, _ ->
                 dismiss()
                 if (position != pageIndex) showPage(position)
@@ -904,18 +948,17 @@ class OfficeActivity : Activity() {
     }
 
     private fun searchDocument() {
-        if (pageCount == 0 || searchPending) return
-        val input = EditText(this).apply { setSingleLine(); hint = "검색어"; setText(searchQuery) }
-        val title = if (documentType == Document.DOCTYPE_SPREADSHEET) "전체 시트 검색" else "문서 검색"
-        AlertDialog.Builder(this).setTitle(title).setView(input).setNegativeButton("취소", null)
-            .setPositiveButton("찾기") { _, _ ->
-                val query = input.text.toString()
-                if (query.isNotBlank()) {
+        if (pageCount == 0) return
+        controls.showSearch(searchQuery,context=if(documentType==Document.DOCTYPE_SPREADSHEET)"전체 시트 검색"else"문서 검색",next={searchNext()},closed={
+            searchDismissed=true;highlight=null;searchMessage="";updateStatus();showPage(pageIndex)
+        }) {query->
+            if(!searchPending){
+                    searchDismissed=false
                     searchQuery = query
                     highlight = null
                     performSearch(0, 0, findAll = documentType == Document.DOCTYPE_SPREADSHEET)
-                }
-            }.show()
+            }else controls.setSearchResult("검색 중 · 잠시 기다려 주세요")
+        }
     }
 
     private fun searchNext() {
@@ -948,6 +991,7 @@ class OfficeActivity : Activity() {
             searchFallbackScheduled = false
         }
         searchMessage = " · 검색 중"
+        runOnUiThread {if(!closed)controls.setSearchResult(if(documentType==Document.DOCTYPE_SPREADSHEET)"전체 시트 검색 중"else"검색 중")}
         updateStatus()
         val part = searchPart
         val query = searchQuery
@@ -995,6 +1039,7 @@ class OfficeActivity : Activity() {
         if (type == Document.CALLBACK_SEARCH_NOT_FOUND || commandFailed) {
             worker.execute {
                 if (!searchPending || (commandFailed && searchResultReceived)) return@execute
+                if(searchDismissed){searchPending=false;return@execute}
                 if (searchFallbackScheduled) return@execute
                 if (documentType == Document.DOCTYPE_SPREADSHEET && !searchFallbackAttempted) {
                     searchFallbackAttempted = true
@@ -1008,6 +1053,7 @@ class OfficeActivity : Activity() {
                     if (!closed) {
                         searchMessage = if (commandFailed) " · 검색 결과 없음 또는 검색 실패" else " · 검색 결과 없음"
                         searchPending = false
+                        controls.setSearchResult(if(commandFailed)"검색 결과 없음 또는 검색 실패"else"검색 결과 없음")
                         val message = if (commandFailed) "검색 결과가 없거나 검색을 완료하지 못했습니다" else "검색 결과가 없습니다"
                         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
                     }
@@ -1020,6 +1066,8 @@ class OfficeActivity : Activity() {
             }
         } else if (type == Document.CALLBACK_SEARCH_RESULT_SELECTION) {
             worker.execute {
+                if(!searchPending)return@execute
+                if(searchDismissed){searchPending=false;return@execute}
                 try {
                     val first = JSONObject(payload).getJSONArray("searchResultSelection").getJSONObject(0)
                     val coords = first.getString("rectangles").substringBefore(';').split(',').map { it.trim().toInt() }.toIntArray()
@@ -1040,6 +1088,7 @@ class OfficeActivity : Activity() {
                         if (!closed) {
                             searchMessage = " · 검색 결과"
                             searchPending = false
+                            controls.setSearchResult(if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(target)?:"시트 ${target+1}"} · 검색 결과"else"${target+1}쪽 · 검색 결과",true)
                             android.widget.Toast.makeText(this, "검색 결과를 표시합니다", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }

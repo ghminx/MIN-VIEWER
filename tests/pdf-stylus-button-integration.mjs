@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
+
+const adb='.research/sdk/platform-tools/adb.exe';
+const run=(...args)=>execFileSync(adb,['-s','emulator-5554',...args],{encoding:'utf8',timeout:30000,maxBuffer:8*1024*1024});
+const screen=()=>{const result=run('shell','uiautomator','dump','/sdcard/min-button.xml');return result.includes('dumped to')?run('shell','cat','/sdcard/min-button.xml'):'';};
+const wait=async pattern=>{for(let i=0;i<12;i++){const xml=screen();if(pattern.test(xml))return xml;await delay(300);}throw Error(`화면 확인 실패: ${pattern}`);};
+const tap=(xml,label)=>{const node=xml.match(new RegExp(`<node[^>]*(?:text|content-desc)="${label}"[^>]*>`))?.[0];const b=node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(b,`${label} 없음`);run('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));};
+const gesture=(y,mode)=>run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','300',String(y),'650',String(y),...(mode?[mode]:[]));
+const capture=name=>{const path=`.research/pdf-ink-test/button-${name}.png`;run('shell','screencap','-p','/sdcard/min-button.png');run('pull','/sdcard/min-button.png',path);return path;};
+const pixels=(name,color,left=150,right=800)=>+execFileSync('python',['-c',"import sys;sys.path.insert(0,'.research/py');from PIL import Image;im=Image.open(sys.argv[1]).convert('RGB');p=im.crop((int(sys.argv[3]),600,int(sys.argv[4]),1000)).getdata();print(sum((r>180 and g<160 and b<160) if sys.argv[2]=='red' else (r>230 and g>190 and 80<b<230) for r,g,b in p))",`.research/pdf-ink-test/button-${name}.png`,color,String(left),String(right)],{encoding:'utf8'}).trim();
+const source=`MIN-button-${Date.now()}.pdf`;
+mkdirSync('.research/pdf-ink-test',{recursive:true});
+execFileSync('python',['-c',"import sys;sys.path.insert(0,'.research/py');import pymupdf as f;d=f.open();p=d.new_page(width=600,height=800);p.insert_text((40,70),'BUTTON TEST: ORIGINAL TEXT');d.save('.research/pdf-ink-test/button.pdf')"]);
+try {
+ run('shell','wm','size','1000x1600');run('shell','wm','density','160');
+ run('push','.research/pdf-ink-test/button.pdf',`/sdcard/Download/${source}`);
+ run('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE','-d',`file:///sdcard/Download/${source}`);
+ run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
+ tap(await wait(/파일 열기/),'파일 열기');tap(await wait(/content-desc="(?:Search|검색)"/),'(?:Search|검색)');
+ run('shell','input','text',source);run('shell','input','keyevent','ENTER');
+ const picker=await wait(new RegExp(`text="${source}"[^>]*class="android.widget.TextView"`));
+ const file=picker.match(new RegExp(`<node[^>]*text="${source}"[^>]*class="android.widget.TextView"[^>]*>`))?.[0];
+ const bounds=file?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(bounds,'시스템 파일 선택기의 시험 PDF 필요');
+ run('shell','input','tap',String((+bounds[1]+ +bounds[3])/2),String((+bounds[2]+ +bounds[4])/2));
+ tap(await wait(/PDF 1 \/ 1/),'더보기');
+ if(process.argv.includes('--continuous')){tap(await wait(/연속 보기/),'연속 보기');tap(await wait(/PDF 1 \/ 1/),'더보기');}
+ tap(await wait(/필기 시작/),'필기 시작');await wait(/필기 준비 완료/);
+ gesture(700);await wait(/필기 저장 완료/);capture('pen');assert.ok(pixels('pen','red')>300,'원래 펜 획 표시 필요');
+ if(process.argv.includes('--button-tap-only')){
+  run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','450','700','450','700','button-tap');
+  await wait(/필기 저장 완료/);capture('button-tap');assert.ok(pixels('button-tap','red')<10,'화면에 댄 펜을 움직이지 않고 버튼을 눌러도 접촉 위치의 획 삭제 필요');
+  run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover','450','700','450','700','button');
+  await wait(/content-desc="지우개, 선택됨"/);
+  run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover-exit','450','700','450','700','button');
+  await wait(/content-desc="펜, 선택됨"/);
+  console.log('이동 없는 접촉 중 버튼 누르기의 즉시 삭제·이전 펜 복귀 통과');
+ }else{
+ tap(screen(),'형광펜');
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover','500','700','500','700','button');
+ await wait(/content-desc="지우개, 선택됨"/);capture('hover');assert.ok(pixels('hover','red')>300,'화면에 대지 않은 호버는 필기를 지우면 안 됨');
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover','500','700','500','700');
+ await wait(/content-desc="형광펜, 선택됨"/);
+ gesture(700,'button');await wait(/필기 저장 완료/);capture('erased');
+ assert.ok(pixels('erased','red')<10,'버튼을 누른 펜 입력은 원래 도구 대신 획 지우개로 동작해야 함');
+ assert.ok(pixels('erased','yellow')<10,'임시 지우개가 형광펜 획을 만들면 안 됨');
+ assert.match(screen(),/content-desc="형광펜, 선택됨"/);
+ gesture(850);await wait(/필기 저장 완료/);capture('restored');assert.ok(pixels('restored','yellow')>1000,'버튼을 놓으면 이전 형광펜으로 복귀 필요');
+ console.log('버튼 누른 동안 획 삭제·버튼을 놓은 뒤 원래 형광펜 복귀 통과');
+ gesture(850,'button-release');await wait(/필기 저장 완료/);capture('release-in-contact');
+ assert.ok(pixels('release-in-contact','yellow',150,440)<10,'버튼을 누른 구간에서 이전 획 삭제 필요');
+ assert.ok(pixels('release-in-contact','yellow',540,800)>300,'화면 접촉 중 버튼을 놓은 뒤의 이동은 원래 형광펜으로 기록 필요');
+ console.log('화면 접촉을 유지한 버튼 해제 즉시 원래 도구로 복귀 통과');
+ const yellow=pixels('release-in-contact','yellow');
+ gesture(850,'button-press-cancel');capture('canceled');
+ assert.equal(pixels('canceled','yellow'),yellow,'중간에 도구를 바꾼 입력도 취소되면 전체 필기 유지 필요');
+ tap(screen(),'실행 취소');await wait(/필기 저장 완료/);capture('undo');
+ assert.ok(pixels('undo','yellow',150,440)>300,'한 번의 실행 취소로 지우기 전 전체 획 복원 필요');
+ tap(screen(),'다시 실행');await wait(/필기 저장 완료/);capture('redo');
+ assert.equal(pixels('redo','yellow'),yellow,'다시 실행으로 한 번의 접촉 전체 결과 복원 필요');
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover','500','700','500','700','button');
+ await wait(/content-desc="지우개, 선택됨"/);
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover-exit','500','700','500','700','button');
+ await wait(/content-desc="형광펜, 선택됨"/);
+ console.log('도구 전환 입력 취소·한 단계 실행 취소/다시 실행·호버 이탈 후 복귀 통과');
+ run('shell','input','keyevent','BACK');run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
+ const title=source.replaceAll('.','\\.');tap(await wait(new RegExp(title)),title);await wait(/PDF 1 \/ 1/);
+ assert.doesNotMatch(screen(),/content-desc="지우개, 선택됨"/,'재열기는 읽기 모드로 시작해야 함');
+ tap(screen(),'필기 시작');await wait(/필기 준비 완료/);capture('reopened');
+ assert.equal(pixels('reopened','yellow'),yellow,'재열기 후 버튼 지우개와 필기 결과 복원 필요');
+ assert.doesNotMatch(screen(),/content-desc="지우개, 선택됨"/,'일시 지우개 상태를 저장하면 안 됨');
+ assert.equal(run('shell','sha256sum',`/sdcard/Download/${source}`).trim().split(/\s+/)[0],createHash('sha256').update(readFileSync('.research/pdf-ink-test/button.pdf')).digest('hex'));
+ console.log('강제 종료 후 결과 복원·임시 지우개 해제·외부 원본 불변 통과');
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','600','850','600','850','button-tap');
+ await wait(/필기 저장 완료/);capture('button-tap');assert.ok(pixels('button-tap','yellow')<10&&pixels('button-tap','red')<10,'움직이지 않은 펜 버튼 입력도 획을 지우고 새 점은 남기지 않아야 함');
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover','600','850','600','850','button');
+ await wait(/content-desc="지우개, 선택됨"/);
+ run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','hover-exit','600','850','600','850','button');
+ await wait(/content-desc="펜, 선택됨"/);console.log('접촉 중 버튼 누르기의 즉시 삭제와 이전 펜 복귀 통과');
+ }
+} finally {run('shell','wm','size','reset');run('shell','wm','density','reset');}

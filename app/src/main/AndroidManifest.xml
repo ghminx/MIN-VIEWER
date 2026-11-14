@@ -3,8 +3,8 @@
         <provider android:name=".ViewStateProvider" android:authorities="${applicationId}.viewstate" android:exported="false" />
         <provider android:name=".PdfNoteProvider" android:authorities="${applicationId}.pdfnotes" android:exported="false" />
         <activity android:name=".PdfActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
+        <activity android:name=".PdfNotesActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
         <activity android:name=".CsvActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
-        <activity android:name=".FontsActivity" android:icon="@mipmap/ic_launcher" android:exported="false" />
         <activity android:name=".OfficeActivity" android:icon="@mipmap/ic_launcher" android:exported="false" android:process=":office" />
         <activity android:name=".MainActivity" android:icon="@mipmap/ic_launcher" android:exported="true" android:launchMode="singleTop">
             <intent-filter>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="uiFieldColor" format="color" />
+    <attr name="uiLineColor" format="color" />
+    <attr name="uiSelectedColor" format="color" />
+    <color name="ui_navy">#192D4D</color>
+    <color name="ui_text_light">#192D4D</color>
+    <color name="ui_text_dark">#E6ECF5</color>
+    <color name="ui_muted_light">#657284</color>
+    <color name="ui_muted_dark">#AEBACC</color>
+    <color name="ui_surface_light">#FFFFFF</color>
+    <color name="ui_surface_dark">#242D39</color>
+    <color name="ui_background_light">#F7F8FA</color>
+    <color name="ui_background_dark">#1B222C</color>
+    <color name="ui_selected_light">#E8EFF9</color>
+    <color name="ui_selected_dark">#35465D</color>
+    <color name="ui_line_light">#DDE3EC</color>
+    <color name="ui_line_dark">#404D5E</color>
+    <color name="ui_accent_dark">#ADC6EA</color>
+    <color name="ui_danger">#BD3D49</color>
+    <color name="ui_danger_dark">#FF9DA8</color>
+</resources>

@@ -57,6 +57,6 @@ for (const [source, name, opened] of [
     xml = await waitFor(new RegExp(`content-desc="${name} 목록에서 삭제"`));
     tap(xml, 'content-desc', `${name} 목록에서 삭제`);
     xml = await waitFor(/최근 문서 목록에서 삭제할까요/);
-    tap(xml, 'text', '삭제');
+    tap(xml, 'text', '기록 지우기');
     console.log(`${name}: 원본 이동·삭제 후 재선택 안내 확인`);
 }
