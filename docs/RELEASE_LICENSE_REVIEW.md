@@ -1,8 +1,8 @@
-# v1.0.0~v1.0.5 베타 배포 라이선스 검토
+# v1.0.0~v1.1 배포 라이선스 검토
 
 ## 확인 범위
 
-- 대상: GitHub `v1.0.0`~`v1.0.5` 베타 ARM64 APK 및 해당 빌드 환경임. `v1.0.3` 이후 고지를 보완하며 LibreOffice 엔진 변경은 없음.
+- 대상: GitHub `v1.0.0`~`v1.0.5` 베타와 `v1.1` ARM64 APK 및 해당 빌드 환경임. `v1.0.3` 이후 고지를 보완하며 LibreOffice 엔진 변경은 없음.
 - APK에는 LibreOfficeKit, rhwp 및 해당 구성 요소의 고지와 글꼴이 포함됨.
 - LibreOffice 원본 고지 HTML과 rhwp 고지는 APK 자산 및 앱 설정의 라이선스 화면에서 확인 가능함.
 - LibreOffice 원본 태그는 `libreoffice-26.2.6.3`, 커밋은 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`임. 실제 LibreOffice 소스의 수정 파일 두 개에 저장소의 [패치](../patches/libreoffice-26.2-cfb4-read.patch)가 적용된 상태임을 확인함.
@@ -82,18 +82,24 @@ python3 tools/relink-libreoffice.py /경로/libreoffice-core /경로/relink-outp
 
 현재 베타 릴리스의 라이선스 준수 검토는 완료되지 않았으며 법률적 최종 판단은 별도로 필요함.
 
-## 미배포 PDF 필기 출력 의존성
+## v1.1 PDF 필기 출력 의존성
 
-- PDF 사본 출력에 `com.tom-roush:pdfbox-android:2.0.27.0`을 추가함. 공개 v1.0.5 APK의 변경은 수행하지 않음.
+- PDF 사본 출력에 `com.tom-roush:pdfbox-android:2.0.27.0`을 추가하고 v1.1 배포에 포함함. 기존 공개 v1.0.5 APK는 유지함.
 - 공식 [태그의 LICENSE·NOTICE](https://github.com/TomRoush/PdfBox-Android/tree/v2.0.27.0)를 보관함. Apache 2.0, PDFBox·FontBox 및 Adobe 글꼴 자료의 포함 조건을 함께 기록함. 선택적 BouncyCastle 라이브러리는 제외함.
 - AAR의 `LiberationSans-Regular.ttf` 이름 테이블에서 버전 2.1.5와 SIL Open Font License 1.1 표기를 확인하고 [해당 버전의 글꼴 라이선스](https://github.com/liberationfonts/liberation-fonts/blob/2.1.5/LICENSE)를 포함함. 새 글꼴을 문서 원본의 글꼴 대신 적용하지 않음.
 - Unicode Scripts 등 문자 자료의 고지와 라이선스를 포함하고 앱의 PDFBox 고지 화면에 합쳐 제공함. 고지 원문은 `app/src/main/assets/licenses/pdfbox/`에 보관함.
 - AAR은 변경하지 않았으며 정확한 해시·출처·크기 측정과 시험 범위는 `ANNOTATION_PLAN.md` 12절을 따름. 기존 LibreOffice·Rust 구성 요소에 대한 이전의 미검증 사항은 별도로 유지함.
 
-## 미배포 UI 글꼴
+## v1.1 UI 글꼴
 
 - [Pretendard v1.3.9 공식 배포 소스](https://github.com/orioncactus/pretendard/tree/v1.3.9/packages/pretendard/dist/public/static)의 Regular·SemiBold OTF를 수정 없이 포함함. 앱 UI에만 적용하고 문서 렌더링의 대체 글꼴로 등록하지 않음.
 - [원본 라이선스](https://github.com/orioncactus/pretendard/blob/v1.3.9/LICENSE)는 SIL OFL 1.1이며 저작권·Reserved Font Name 고지를 `app/src/main/assets/licenses/pretendard.txt`와 앱의 라이선스 메뉴에 포함함. 글꼴 자체 판매나 변형·이름 변경은 수행하지 않음.
 - Regular SHA-256: `3ffbacde6ab8411f1d2db54bb9b1f0b3ee2a738932033722cf0388c06aed1c93`.
 - SemiBold SHA-256: `c89bc43027dc7cde5726e96223376f8eec09302b2fc1f8147fd5b57cfc376118`.
-- 두 글꼴의 원본 합계는 3,158,056바이트임. 향후 공개 APK 배포 시 이 고지·글꼴을 함께 포함해야 하며 현재 공개 v1.0.5 파일은 갱신하지 않음.
+- 두 글꼴의 원본 합계는 3,158,056바이트임. v1.1 APK와 별도 고지 묶음에 글꼴 고지를 포함함. 기존 공개 v1.0.5 파일은 갱신하지 않음.
+
+## v1.1 한글 벡터 PDF 출력
+
+- `com.caverock:androidsvg-aar:1.4`를 수정 없이 사용함. 출처·저작권과 Apache License 2.0 전문을 `app/src/main/assets/licenses/androidsvg.txt` 및 앱의 라이선스 메뉴에 포함함.
+- LibreOffice 26.2.6.3과 rhwp 0.9.0의 빌드 입력은 `engine-inputs.properties`의 기존 해시를 유지함. 재결합 자료·원본·외부 소스는 기존 v1.0.0·v1.0.1 릴리스에서 계속 제공함.
+- PDFBox·AndroidSVG·Pretendard를 포함한 APK 고지를 v1.1의 별도 고지 ZIP에도 제공함. 기존 네이티브·Rust 구성 요소에 대한 미검증 사항을 해소했다는 의미는 아님.
