@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -32,22 +35,41 @@ android {
     packaging { jniLibs { useLegacyPackaging = true } }
 }
 
+val rhwpDirectory = rootProject.file(".research/rhwp-patched")
+val libreOfficeApk = rootProject.file(".research/office-alternatives/libreoffice-built-arm64-unsigned.apk")
+val engineManifest = rootProject.file("engine-inputs.properties")
+val engineInputs = mapOf("rhwp.js" to rhwpDirectory.resolve("rhwp.js"),
+    "rhwp.wasm" to rhwpDirectory.resolve("rhwp_bg.wasm"), "libreoffice.apk" to libreOfficeApk)
+
 val checkEngineAssets by tasks.registering {
+    inputs.files(engineManifest, *engineInputs.values.toTypedArray())
     doLast {
-        check(rootProject.file(".research/rhwp-patched/rhwp_bg.wasm").exists() && rootProject.file(".research/rhwp-patched/rhwp.js").exists()) {
-            "수정된 한글 엔진 빌드 필요: docs/ANDROID_POC.md 참고"
+        val expected = Properties().apply { engineManifest.inputStream().use { load(it) } }
+        logger.lifecycle("엔진 입력 검증: rhwp ${expected.getProperty("rhwp.version")} / LibreOffice ${expected.getProperty("libreoffice.version")}")
+        engineInputs.forEach { (name, file) ->
+            check(file.isFile) { "$name 엔진 입력 필요: docs/ANDROID_POC.md 참고" }
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            check(actual == expected.getProperty("$name.sha256")) {
+                "$name 엔진 SHA-256 불일치: 승인된 엔진과 engine-inputs.properties 확인 필요"
+            }
         }
         check(rootProject.file(".research/engine-poc/node_modules/@rhwp/core/notices").isDirectory) {
             "한글 엔진 의존성 고지 설치 필요: docs/ANDROID_POC.md 참고"
-        }
-        check(rootProject.file(".research/office-alternatives/libreoffice-built-arm64-unsigned.apk").exists()) {
-            "LibreOffice ARM64 시험 빌드 필요: docs/ANDROID_POC.md 참고"
         }
     }
 }
 val prepareEngineAssets by tasks.registering(Sync::class) {
     dependsOn(checkEngineAssets)
-    from(rootProject.file(".research/rhwp-patched")) {
+    from(rhwpDirectory) {
         include("rhwp.js", "rhwp_bg.wasm", "LICENSE")
         into("rhwp")
     }
@@ -57,7 +79,6 @@ val prepareEngineAssets by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("generated/engine-assets"))
 }
-val libreOfficeApk = rootProject.file(".research/office-alternatives/libreoffice-built-arm64-unsigned.apk")
 val prepareLibreOfficeAssets by tasks.registering(Copy::class) {
     dependsOn(checkEngineAssets)
     from(zipTree(libreOfficeApk)) {

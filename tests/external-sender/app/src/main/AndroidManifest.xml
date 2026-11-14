@@ -2,6 +2,9 @@
     <instrumentation android:name=".ReleaseGrantInstrumentation" android:targetPackage="org.minviewer.app" />
     <application android:label="MIN VIEWER test sender" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <provider android:name=".TestProvider" android:authorities="org.minviewer.sender.files" android:exported="false" android:grantUriPermissions="true" />
+        <provider android:name=".FaultDocumentsProvider" android:authorities="org.minviewer.sender.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+        </provider>
         <activity android:name=".SenderActivity" android:exported="true">
             <intent-filter>
                 <action android:name="org.minviewer.sender.LAUNCH" />

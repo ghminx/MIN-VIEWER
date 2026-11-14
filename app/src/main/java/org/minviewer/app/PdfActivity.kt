@@ -68,18 +68,17 @@ class PdfActivity : Activity() {
     private var pageOverview: android.app.Dialog? = null
     private var restoreOverview = false
     private var previewRecorded = false
-    private lateinit var nextSearch: Button
+    private var canSearchNext = false
     private var renderer: PdfRenderer? = null
     private var temporaryFile: File? = null
     private var pageCount = 0
     private var pageIndex = 0
     private var mode = 1
     private var viewing = PageViewing()
-    private val wordSnapshot: File? by lazy {
-        intent.getStringExtra("word_snapshot")?.let {name->
-            require(name.matches(Regex("[0-9a-f-]{36}"))) {"Word 읽기 식별자가 올바르지 않습니다."}
-            File(cacheDir,"word-view/$name")
-        }
+    @Suppress("DEPRECATION")
+    private val wordSnapshot: WordSnapshot? by lazy {
+        (lastNonConfigurationInstance as? ViewerSession)?.wordSnapshot
+            ?: intent.getStringExtra("word_snapshot")?.let { WordSnapshot.open(cacheDir, it) }
     }
     private var documentAreaWidth = 0
     private var documentAreaHeight = 0
@@ -174,6 +173,7 @@ class PdfActivity : Activity() {
     private val erasedStrokes = mutableSetOf<Int>()
     private var inkDirty = false
     private data class InkSession(val note: PdfInkNote, val undo: List<List<InkStroke>>, val redo: List<List<InkStroke>>, val dirty: Boolean)
+    private data class ViewerSession(val ink: InkSession?, val wordSnapshot: WordSnapshot?)
     private var retainedInkSession: InkSession? = null
     private var inkSelection: InkSelection? = null
     private var selectionPreview: InkSelection? = null
@@ -383,7 +383,7 @@ class PdfActivity : Activity() {
         inkWorker.execute {
             try {
                 val snapshot=wordSnapshot
-                val note = if(snapshot!=null)inkStore.createDocument(File(snapshot,"source.docx"),File(snapshot,"background.pdf"),intent.getStringExtra("name")?:"문서.docx",pageCount,File(snapshot,"profile.txt").readText()){closed}
+                val note = if(snapshot!=null)inkStore.createDocument(File(snapshot.directory,"source.docx"),File(snapshot.directory,"background.pdf"),intent.getStringExtra("name")?:"문서.docx",pageCount,File(snapshot.directory,"profile.txt").readText()){closed}
                 else (contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")).use {
                     inkStore.create(it, intent.getStringExtra("name") ?: "문서.pdf", pageCount)
                 }
@@ -439,7 +439,7 @@ class PdfActivity : Activity() {
         ThemePreferences.apply(this)
         super.onCreate(savedInstanceState)
         // 비동기 문서 로딩 전에 구성 변경 상태 확보
-        retainedInkSession = lastNonConfigurationInstance as? InkSession
+        retainedInkSession = (lastNonConfigurationInstance as? ViewerSession)?.ink
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
@@ -458,10 +458,6 @@ class PdfActivity : Activity() {
         inkTool = savedInstanceState?.getString("inkTool") ?: "pen"
         highlighterColor = savedInstanceState?.getInt("highlighterColor") ?: Color.rgb(255, 215, 0)
         highlighterWidth = savedInstanceState?.getFloat("highlighterWidth") ?: 0.02f
-        nextSearch = Button(this).apply {
-            text = "다음 찾기"; textSize = 12f; minWidth = 0; setPadding(0, 0, 0, 0); isEnabled = false
-            setOnClickListener { if (searchQuery.isNotEmpty() && highlightedPage >= 0) findMatch(searchQuery, highlightedPage, highlightedMatch + 1) }
-        }
         val title=(intent.getStringExtra("name")?:"PDF").let {if(intent.data?.authority=="$packageName.pdfnotes")it.removePrefix("[필기] ")else it}
         controls = ViewerControls(this, title, { finish() }, { searchDocument() },
             { showThumbnails() },
@@ -474,9 +470,9 @@ class PdfActivity : Activity() {
                 "필기 저장 다시 시도" to { inkNote?.let { persistInk(it) } },
                 "읽기 모드" to { stopInk() },
                 "필기 포함 PDF 내보내기" to {openInkActions("export")}, "문서 백업" to {openInkActions("backup")},
-                "다음 검색 결과" to { if (nextSearch.isEnabled) nextSearch.performClick() }),
+                "다음 검색 결과" to { nextSearchResult() }),
             selectedMenuItem={name->when(name){"한쪽 보기"->mode==1;"두쪽 보기"->mode==2;"페이지 넘김"->!viewing.scrolling;"세로 스크롤"->viewing.scrolling;"첫 페이지를 표지로 보기"->viewing.cover;else->false}},
-            enabledMenuItem={name->when(name){"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->nextSearch.isEnabled;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)})
+            enabledMenuItem={name->when(name){"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->canSearchNext;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)})
         status = controls.status
         controls.setListNavigation {if(thumbnailPanel==null&&pageOverview==null)showThumbnails()}
         controls.setLocationAction {controls.showPageJump(pageIndex,pageCount)}
@@ -979,7 +975,7 @@ class PdfActivity : Activity() {
                         oldTemporaryFilesCleaned = true
                     }
                 }
-                val cached = if (restoredNote == null) wordSnapshot?.let{File(it,"background.pdf")}?:temporaryFile else null
+                val cached = if (restoredNote == null) wordSnapshot?.let{File(it.directory,"background.pdf")}?:temporaryFile else null
                 val descriptor = if (cached != null) ParcelFileDescriptor.open(cached, ParcelFileDescriptor.MODE_READ_ONLY)
                     else contentResolver.openFileDescriptor(uri, "r") ?: throw IOException("파일을 읽을 수 없습니다.")
                 val opened = try {
@@ -1138,6 +1134,10 @@ class PdfActivity : Activity() {
         }
     }
 
+    private fun nextSearchResult() {
+        if (canSearchNext) findMatch(searchQuery, highlightedPage, highlightedMatch + 1)
+    }
+
     private fun searchDocument() {
         if (pageCount == 0) return
         if (android.os.Build.VERSION.SDK_INT < 35) {
@@ -1147,9 +1147,9 @@ class PdfActivity : Activity() {
             return
         }
         controls.showSearch(searchQuery,
-            next={if(nextSearch.isEnabled)findMatch(searchQuery,highlightedPage,highlightedMatch+1)},
+            next={nextSearchResult()},
             closed={
-                searchGeneration++;searching=false;nextSearch.isEnabled=false
+                searchGeneration++;searching=false;canSearchNext=false
                 highlightedPage=-1;highlightedBounds=emptyList();searchMessage=""
                 (list.adapter as? BaseAdapter)?.notifyDataSetChanged();updateStatus()
             }) { query -> searchQuery=query;findMatch(query,0,0) }
@@ -1159,7 +1159,7 @@ class PdfActivity : Activity() {
         if (android.os.Build.VERSION.SDK_INT < 35) return
         val generation = ++searchGeneration
         searching = true
-        nextSearch.isEnabled = false
+        canSearchNext = false
         controls.setSearchResult("검색 중")
         searchMessage = " · 검색 중"
         updateStatus()
@@ -1196,7 +1196,7 @@ class PdfActivity : Activity() {
                         highlightedBounds = bounds
                         highlightedWidth = width
                         highlightedHeight = height
-                        nextSearch.isEnabled = found >= 0
+                        canSearchNext = found >= 0
                         controls.setSearchResult(if(found>=0)"${found+1}쪽 · 이 페이지 ${matchIndex+1}번째"else"검색 결과 없음",found>=0)
                         searchMessage = if (found >= 0) " · 검색 결과 · 이 페이지 ${matchIndex + 1}번째" else " · 검색 결과 없음"
                         android.widget.Toast.makeText(this, searchMessage.removePrefix(" · "), android.widget.Toast.LENGTH_SHORT).show()
@@ -1557,7 +1557,7 @@ class PdfActivity : Activity() {
 
     @Deprecated("Android Activity의 구성 변경 상태 유지")
     override fun onRetainNonConfigurationInstance(): Any? =
-        inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession
+        ViewerSession(inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession, wordSnapshot)
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("inkToolsCollapsed",inkCollapsed)
@@ -1592,7 +1592,7 @@ class PdfActivity : Activity() {
         worker.shutdown()
         cache.evictAll()
         thumbnails.evictAll()
-        if(!isChangingConfigurations)wordSnapshot?.let {directory->PdfInkStore.io.execute {directory.deleteRecursively()}}
+        if(!isChangingConfigurations)wordSnapshot?.let {snapshot->PdfInkStore.io.execute {snapshot.close();WordSnapshot.cleanup(cacheDir)}}
         super.onDestroy()
     }
 }

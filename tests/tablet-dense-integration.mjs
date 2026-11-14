@@ -21,12 +21,14 @@ const oldAuto=run('shell','settings','get','system','accelerometer_rotation').tr
 try{
  run('shell','settings','put','system','accelerometer_rotation','0');run('shell','settings','put','system','user_rotation','1');
  open();tap(await wait(/PDF 1 \/ 3/),'필기 시작');let xml=await wait(/읽기 모드로 전환/);
- const before=note();assert.ok(before.strokes.length>=1704);capture(`${label}-landscape-before`);
+ const before=note();assert.equal(before.name,'MIN-tablet-dense-1704.pdf','독립 시험 문서만 사용');assert.ok(before.strokes.length>=1704);capture(`${label}-landscape-before`);
  const [l,t,r,b]=page(xml),left=(l+r)/2-220,top=(t+b)/2-160;
  run('shell','dumpsys','gfxinfo','org.minviewer.app','reset');
  let log='';const input=spawn(adb,['-s',device,'shell','CLASSPATH=/data/local/tmp/min-tablet-tools.jar','app_process','/system/bin','InkSustainedGesture',String(duration),String(left),String(top),'440','300']);
  input.stdout.on('data',v=>{log+=v;process.stdout.write(v);});input.stderr.on('data',v=>process.stderr.write(v));
- assert.equal(await new Promise(resolve=>input.on('exit',resolve)),0);await wait(/필기 저장 완료/);
+ let ended=false;const done=new Promise(resolve=>input.on('exit',code=>{ended=true;resolve(code);}));const memory=[];
+ while(!ended){await Promise.race([done,delay(30000)]);memory.push({at:Date.now(),detail:run('shell','dumpsys','meminfo','org.minviewer.app')});}
+ assert.equal(await done,0);await wait(/필기 저장 완료/);
  const match=log.match(/FINISHED elapsedMs=(\d+) strokes=(\d+) events=\d+ injectP50Ms=(\d+) injectP95Ms=(\d+) injectMaxMs=(\d+)/);assert.ok(match,log);
  const saved=note();assert.equal(saved.strokes.length,before.strokes.length+ +match[2]);assert.deepEqual(saved.strokes.slice(0,before.strokes.length),before.strokes);
  writeFileSync(`${work}/${label}-saved.json`,JSON.stringify(saved));capture(`${label}-landscape-after`);
@@ -36,7 +38,7 @@ try{
  run('shell','CLASSPATH=/data/local/tmp/min-tablet-tools.jar','app_process','/system/bin','InkGesture','pen',String(cx-150),String(cy),String(cx+150),String(cy));
  await wait(/필기 저장 완료/);const rotated=note();assert.equal(rotated.strokes.length,saved.strokes.length+1);assert.deepEqual(rotated.strokes.slice(0,saved.strokes.length),saved.strokes);capture(`${label}-portrait-after`);
  open();await wait(/PDF 1 \/ 3/);assert.deepEqual(note(),rotated);capture(`${label}-reopened`);
- const result={device,id,initial:before.strokes.length,added:+match[2],final:rotated.strokes.length,durationMs:+match[1],p50:+match[3],p95:+match[4],max:+match[5],graphics,log,forceStopRestore:true,portraitStroke:true};
- writeFileSync(`${work}/${label}-result.json`,JSON.stringify(result,null,2));console.log(JSON.stringify({...result,graphics:undefined,log:undefined}));
+ const result={device,id,initial:before.strokes.length,added:+match[2],final:rotated.strokes.length,durationMs:+match[1],p50:+match[3],p95:+match[4],max:+match[5],graphics,memory,log,forceStopRestore:true,portraitStroke:true};
+ writeFileSync(`${work}/${label}-result.json`,JSON.stringify(result,null,2));console.log(JSON.stringify({...result,graphics:undefined,memory:undefined,log:undefined}));
  assert.ok(result.p50<40&&result.p95<100,'밀집 필기 입력 대기 기준 초과');
 }finally{run('shell','settings','put','system','user_rotation',oldRotation);run('shell','settings','put','system','accelerometer_rotation',oldAuto);}

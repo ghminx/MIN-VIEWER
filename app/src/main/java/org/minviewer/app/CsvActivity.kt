@@ -16,7 +16,6 @@ import android.widget.AbsListView
 import android.widget.TextView
 import android.widget.EditText
 import android.text.InputType
-import android.view.Gravity
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStreamReader

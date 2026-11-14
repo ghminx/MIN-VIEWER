@@ -31,6 +31,10 @@ try{
  run('push','.research/pdf-ink-test/ink-gesture.jar','/data/local/tmp/min-ink-gesture.jar');
  run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen','450','450','750','450');await wait(/필기 저장 완료/);
  capture('ink');assert.ok(red('ink')>before+100,'PPT 슬라이드에 실제 획이 보여야 함');
+ run('shell','input','keyevent','BACK');
+ const home=await wait(new RegExp(`${literal(name)} 관리`));
+ assert.doesNotMatch(home,new RegExp(`${literal(name)} 목록에서 삭제`),'정상 뒤로 복귀 시 원본 URI를 최근 문서에 다시 등록하지 않아야 함');
+ console.log('PPT 정상 복귀 시 필기 문서 URI 인계 통과');
  run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
  tap(await wait(new RegExp(literal(name))),literal(name));await wait(/PPT 2 \/ 3/);tap(screen(),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  capture('reopened');assert.ok(red('reopened')>before+100,'강제 종료 후 PPT 필기가 복원되어야 함');

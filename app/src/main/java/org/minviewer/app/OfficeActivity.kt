@@ -66,9 +66,11 @@ class OfficeActivity : Activity() {
     private var document: Document? = null
     private var temporaryFile: File? = null
     private var presentationSource: File? = null
+    private var wordSnapshot: WordSnapshot? = null
     private var documentType = -1
     private var pageCount = 0
     private var pageIndex = 0
+    private var resultHandedOff = false
     private var viewportX = 0
     private var viewportY = 0
     private var pinchStartX = 0
@@ -113,7 +115,7 @@ class OfficeActivity : Activity() {
                 return true
             }
             override fun onDoubleTap(event:MotionEvent):Boolean {
-                setZoom(if(zoom>1f)1f else 2f,event.rawX,event.rawY)
+                setZoom(if(zoom>1f)1f else 2f,event.x,event.y)
                 return true
             }
         })
@@ -214,22 +216,19 @@ class OfficeActivity : Activity() {
                 val top = if (documentType == Document.DOCTYPE_SPREADSHEET) 0 else rect[1]
                 val right = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetWidth else rect[0] + rect[2]
                 val bottom = if (documentType == Document.DOCTYPE_SPREADSHEET) sheetHeight else rect[1] + rect[3]
-                val nextScale = minOf(image.width.toFloat() / width, image.height.toFloat() / height)
-                val nextLeft = (image.width - width * nextScale) / 2f
-                val nextTop = (image.height - height * nextScale) / 2f
+                val nextViewport = DocumentViewport(width, height, image.width, image.height)
                 val localX = pinchArea.left + pinchFractionX * pinchArea.width() + detector.focusX - pinchFocusStartX
                 val localY = pinchArea.top + pinchFractionY * pinchArea.height() + detector.focusY - pinchFocusStartY
-                val focusX = (localX - nextLeft) / (width * nextScale)
-                val focusY = (localY - nextTop) / (height * nextScale)
-                viewportX = (pinchAnchorX - width * focusX).toInt().coerceIn(left, (right - width).coerceAtLeast(left))
-                viewportY = (pinchAnchorY - height * focusY).toInt().coerceIn(top, (bottom - height).coerceAtLeast(top))
-                val scale = nextScale / (pinchArea.width() / pinchWidth)
+                val origin = nextViewport.origin(pinchAnchorX, pinchAnchorY, localX, localY)
+                viewportX = origin.first.coerceIn(left, (right - width).coerceAtLeast(left))
+                viewportY = origin.second.coerceIn(top, (bottom - height).coerceAtLeast(top))
+                val scale = nextViewport.scale / (pinchArea.width() / pinchWidth)
                 image.pivotX = 0f
                 image.pivotY = 0f
                 image.scaleX = scale
                 image.scaleY = scale
-                image.translationX = nextLeft - pinchArea.left * scale + (pinchStartX - viewportX) * nextScale
-                image.translationY = nextTop - pinchArea.top * scale + (pinchStartY - viewportY) * nextScale
+                image.translationX = nextViewport.left - pinchArea.left * scale + (pinchStartX - viewportX) * nextViewport.scale
+                image.translationY = nextViewport.top - pinchArea.top * scale + (pinchStartY - viewportY) * nextViewport.scale
                 zoom = next
                 return true
             }
@@ -461,7 +460,7 @@ class OfficeActivity : Activity() {
         if(inkPreparing)return super.dispatchTouchEvent(event)
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {
             val bounds=android.graphics.Rect()
-            touchOnOverlay=slidePanelView?.let {it.getGlobalVisibleRect(bounds)&&bounds.contains(event.rawX.toInt(),event.rawY.toInt())}?:false
+            touchOnOverlay=slidePanelView?.let {it.getGlobalVisibleRect(bounds)&&bounds.contains(event.x.toInt(),event.y.toInt())}?:false
         }
         if(touchOnOverlay)return super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -501,8 +500,9 @@ class OfficeActivity : Activity() {
     }
 
     private fun openWordPageViewer(opened: Document, source: File) {
-        val directory=File(cacheDir,"word-view/${java.util.UUID.randomUUID()}")
-        check(directory.mkdirs()) {"Word 읽기 폴더를 만들 수 없습니다."}
+        val snapshot=WordSnapshot.create(cacheDir)
+        wordSnapshot=snapshot
+        val directory=snapshot.directory
         var launched=false
         try {
             val background=File(directory,"background.pdf")
@@ -526,11 +526,12 @@ class OfficeActivity : Activity() {
                     startActivity(Intent(this,PdfActivity::class.java).setData(intent.data).addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
                         .putExtra("name",intent.getStringExtra("name")).putExtra("word_snapshot",directory.name)
                         .putExtra("restore_page",pageIndex).putExtra("restore_zoom",zoom))
+                    resultHandedOff = true
                     finish()
-                }else directory.deleteRecursively()
+                }else {snapshot.close();wordSnapshot=null;WordSnapshot.cleanup(cacheDir)}
             }
             launched=true
-        }finally{if(!launched)directory.deleteRecursively()}
+        }finally{if(!launched){snapshot.close();wordSnapshot=null;WordSnapshot.cleanup(cacheDir)}}
     }
 
     private fun beginOfficeInk() {
@@ -572,6 +573,7 @@ class OfficeActivity : Activity() {
                 val uri=android.net.Uri.parse("content://$packageName.pdfnotes/${note.id}")
                 runOnUiThread {
                     if(!closed){
+                        resultHandedOff = true
                         setResult(RESULT_OK,Intent().setData(uri).putExtra("name",name).putExtra("view_page",selected).putExtra("view_mode","1").putExtra("view_zoom",1f))
                         startActivity(Intent(this,PdfActivity::class.java).setData(uri).putExtra("name",name)
                             .putExtra("restore_page",selected).putExtra("restore_mode",1).putExtra("start_ink",true),
@@ -619,7 +621,7 @@ class OfficeActivity : Activity() {
     }
 
     private fun saveResult() {
-        if (openedSuccessfully) {
+        if (openedSuccessfully && !resultHandedOff) {
             setResult(RESULT_OK, Intent().setData(intent.data).putExtra("name", intent.getStringExtra("name"))
                 .putExtra("view_page", pageIndex).putExtra("view_mode", "").putExtra("view_zoom", zoom)
                 .putExtra("view_x", viewportX).putExtra("view_y", viewportY))
@@ -840,8 +842,14 @@ class OfficeActivity : Activity() {
                 (location[0] + availableWidth).toFloat(), (location[1] + availableHeight).toFloat())
             val fx = focusX?.let { ((it - area.left) / area.width()).coerceIn(0f, 1f) } ?: 0.5f
             val fy = focusY?.let { ((it - area.top) / area.height()).coerceIn(0f, 1f) } ?: 0.5f
-            viewportX += ((oldWidth - nextWidth) * fx).toInt()
-            viewportY += ((oldHeight - nextHeight) * fy).toInt()
+            // 확대 전후 여백이 달라도 탭한 문서 위치 유지
+            val nextViewport = DocumentViewport(nextWidth, nextHeight, image.width, image.height)
+            val targetX = focusX ?: location[0] + image.width / 2f
+            val targetY = focusY ?: location[1] + image.height / 2f
+            val origin = nextViewport.origin(viewportX + oldWidth * fx, viewportY + oldHeight * fy,
+                targetX - location[0] - image.paddingLeft, targetY - location[1] - image.paddingTop)
+            viewportX = origin.first
+            viewportY = origin.second
             showPage(pageIndex, viewportX, viewportY)
             updateStatus()
         }
@@ -1277,6 +1285,8 @@ class OfficeActivity : Activity() {
         temporaryFile = null
         presentationSource?.let { file -> file.delete(); activeFiles.remove(file) }
         presentationSource = null
+        wordSnapshot?.close()
+        wordSnapshot = null
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

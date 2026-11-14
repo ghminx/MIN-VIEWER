@@ -13,7 +13,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.ListView
@@ -42,9 +41,8 @@ class MainActivity : Activity() {
     private var browser: WebView? = null
     private lateinit var emptyMessage: TextView
     private lateinit var indicator: TextView
-    private lateinit var hwpSearch: Button
-    private lateinit var hwpNextSearch: Button
-    private lateinit var hwpModes: LinearLayout
+    private var hwpCanSearch = false
+    private var hwpCanNext = false
     private lateinit var viewerControls: ViewerControls
     private var documentUri: Uri? = null
     private var pageCount = 0
@@ -135,9 +133,8 @@ class MainActivity : Activity() {
         documentSource = null
         pageCount = 0
         list.adapter = null
-        hwpSearch.visibility = View.GONE
-        hwpNextSearch.visibility = View.GONE
-        hwpModes.visibility = View.GONE
+        hwpCanSearch = false
+        hwpCanNext = false
         if (ready) browser?.evaluateJavascript("window.resetDocument()", null)
         if (uri?.scheme != "content") {
             documentUri = null
@@ -164,30 +161,17 @@ class MainActivity : Activity() {
             view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
             insets
         }
-        hwpSearch = button("검색") { searchHwp() }.apply { visibility = View.GONE }
-        hwpNextSearch = button("다음 결과") {
-            val generation = loadGeneration
-            browser?.evaluateJavascript("window.nextHwpResult()") { value -> showHwpSearchResult(value, generation) }
-        }.apply { visibility = View.GONE }
-        viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpSearch.visibility == View.VISIBLE) searchHwp() },
+        viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpCanSearch) searchHwp() },
             { listVisible = !listVisible; updateLayout() },
             listOf("한쪽 보기" to { changeHwpMode("single") }, "두쪽 보기" to { changeHwpMode("spread") },
                 "페이지 넘김" to { changeHwpViewing(hwpViewing.copy(scrolling=false)) }, "세로 스크롤" to { changeHwpViewing(hwpViewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeHwpViewing(hwpViewing.copy(cover=!hwpViewing.cover)) },
-                "다음 검색 결과" to { if (hwpNextSearch.visibility == View.VISIBLE) hwpNextSearch.performClick() },
+                "다음 검색 결과" to { nextHwpSearchResult() },
                 "다른 파일 열기" to { pickDocument() }),
             selectedMenuItem={name->when(name){"한쪽 보기"->hwpColumns()==1;"두쪽 보기"->hwpColumns()==2;"페이지 넘김"->!hwpViewing.scrolling;"세로 스크롤"->hwpViewing.scrolling;"첫 페이지를 표지로 보기"->hwpViewing.cover;else->false}},
-            enabledMenuItem={name->when(name){"두쪽 보기"->pageCount>0&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"다음 검색 결과"->hwpNextSearch.visibility==View.VISIBLE;else->pageCount>0}},onFit={resetHwpZoom();showPage(pageIndex)})
+            enabledMenuItem={name->when(name){"두쪽 보기"->pageCount>0&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"다음 검색 결과"->hwpCanNext;else->pageCount>0}},onFit={resetHwpZoom();showPage(pageIndex)})
         indicator = viewerControls.status
         viewerControls.setLocationAction {viewerControls.showPageJump(pageIndex,pageCount)}
         container.addView(viewerControls)
-        hwpModes = LinearLayout(this).apply {
-            visibility = View.GONE
-            listOf("한쪽" to "single", "두쪽" to "spread", "연속" to "continuous").forEach { (label, value) ->
-                addView(button(label) {
-                    changeHwpMode(value)
-                }, toolLayout())
-            }
-        }
         content = LinearLayout(this)
         list = ListView(this).apply {
             setOnItemClickListener { _, _, position, _ ->
@@ -375,19 +359,7 @@ class MainActivity : Activity() {
         return super.dispatchTouchEvent(event)
     }
 
-    private fun button(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        textSize = 12f
-        minWidth = 0
-        setPadding(0, 0, 0, 0)
-        setOnClickListener { action() }
-    }
-
     private fun windowWidthDp() = resources.configuration.screenWidthDp
-
-    private fun toolLayout() = if (windowWidthDp() >= 600)
-        LinearLayout.LayoutParams((96 * resources.displayMetrics.density).toInt(), -2)
-    else LinearLayout.LayoutParams(0, -2, 1f)
 
     private fun updateLayout() {
         val wide = UiStyle(this).useSidePanel()
@@ -478,9 +450,8 @@ class MainActivity : Activity() {
         pageCount = 0
         list.adapter = null
         indicator.text = "불러오는 중"
-        hwpSearch.visibility = View.GONE
-        hwpNextSearch.visibility = View.GONE
-        hwpModes.visibility = View.GONE
+        hwpCanSearch = false
+        hwpCanNext = false
         if (ready) browser?.evaluateJavascript("window.resetDocument()", null)
         worker.execute {
             try {
@@ -593,6 +564,8 @@ class MainActivity : Activity() {
 
     private fun showPage(index: Int) {
         if (index !in 0 until pageCount) return
+        // 키보드·창 크기 변경 시 렌더 완료 전에도 요청 페이지 유지
+        pageIndex = index
         browser?.evaluateJavascript("window.showPage($index)", null)
     }
 
@@ -662,9 +635,15 @@ class MainActivity : Activity() {
         hwpInkSnapshot=snapshot;snapshot.start()
     }
 
+    private fun nextHwpSearchResult() {
+        if (!hwpCanNext) return
+        val generation = loadGeneration
+        browser?.evaluateJavascript("window.nextHwpResult()") { value -> showHwpSearchResult(value, generation) }
+    }
+
     private fun searchHwp() {
-        viewerControls.showSearch(hwpSearchQuery,context="한글 문서 검색",next={hwpNextSearch.performClick()},closed={
-            hwpSearchMessage="";hwpNextSearch.visibility=View.GONE
+        viewerControls.showSearch(hwpSearchQuery,context="한글 문서 검색",next={nextHwpSearchResult()},closed={
+            hwpSearchMessage="";hwpCanNext=false
             browser?.evaluateJavascript("window.clearHwpSearch()",null);showHwpPosition()
         }) {query->
             hwpSearchQuery=query
@@ -684,8 +663,7 @@ class MainActivity : Activity() {
                 val total = result.getInt("total")
                 val canNext = result.getBoolean("canNext")
                 hwpSearchMessage = " · 검색 $number/$total"
-                hwpNextSearch.visibility = if (canNext) View.VISIBLE else View.GONE
-                hwpNextSearch.text = "다음 $number/$total"
+                hwpCanNext = canNext
                 viewerControls.setSearchResult("$number / $total",canNext)
                 val target = result.getInt("page")
                 if (target !in 0 until pageCount) throw org.json.JSONException("검색 결과 페이지가 범위를 벗어났습니다.")
@@ -701,13 +679,13 @@ class MainActivity : Activity() {
             } else {
                 viewerControls.setSearchResult("검색 결과 없음")
                 hwpSearchMessage = ""
-                hwpNextSearch.visibility = View.GONE
+                hwpCanNext = false
                 showHwpPosition()
                 Toast.makeText(this, "검색 결과가 없습니다.", Toast.LENGTH_LONG).show()
             }
         } catch (error: org.json.JSONException) {
             viewerControls.setSearchResult("검색 결과를 확인할 수 없습니다")
-            hwpNextSearch.visibility = View.GONE
+            hwpCanNext = false
             Toast.makeText(this, "검색 결과를 확인할 수 없습니다.", Toast.LENGTH_LONG).show()
         }
     }
@@ -726,8 +704,7 @@ class MainActivity : Activity() {
             openingRecent = false
             val isHwp = selectedName.endsWith(".hwp", true) || selectedName.endsWith(".hwpx", true)
             if(isHwp)viewerControls.setReadingAction(false,true){beginHwpInk()}
-            hwpSearch.visibility = if (isHwp) View.VISIBLE else View.GONE
-            hwpModes.visibility = if (isHwp) View.VISIBLE else View.GONE
+            hwpCanSearch = isHwp
             list.adapter = HwpPageAdapter()
             val selected = pageIndex.coerceIn(0, count - 1)
             if (isHwp) {pageIndex=selected;applyHwpViewing()}
@@ -786,9 +763,8 @@ class MainActivity : Activity() {
         @JavascriptInterface fun onError(generation: Int) = runOnUiThread {
             if (this.generation == browserGeneration && generation == loadGeneration && !isDestroyed && !isFinishing) {
                 indicator.text = "열기 실패"
-                hwpSearch.visibility = View.GONE
-                hwpNextSearch.visibility = View.GONE
-                hwpModes.visibility = View.GONE
+                hwpCanSearch = false
+                hwpCanNext = false
                 showFileAccessError()
             }
         }
