@@ -52,7 +52,7 @@ class DocumentLibraryView(activity: Activity, private val onOpen: () -> Unit,
         addView(body,LayoutParams(0,-1,1f))
         val bar=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(12),0,ui.dp(8),0);setBackgroundColor(ui.navy)}
         bar.addView(HomeScreen.LogoView(ui.activity),LayoutParams(0,ui.dp(64),1f))
-        bar.addView(ui.button("파일 열기","추가",ui.navy,onOpen).apply {background=ui.rounded(Color.WHITE,24)},LayoutParams(ui.dp(48),ui.dp(48)))
+        bar.addView(ui.button("파일 열기","추가",ui.navy,onOpen).apply {background=android.graphics.drawable.InsetDrawable(ui.rounded(Color.WHITE,18),ui.dp(6))},LayoutParams(ui.dp(48),ui.dp(48)))
         bar.addView(ui.button("화면 설정","설정",Color.WHITE,onSettings),LayoutParams(ui.dp(48),ui.dp(48)))
         body.addView(bar)
         val heading=LinearLayout(context).apply {orientation=if(expanded)HORIZONTAL else VERTICAL;gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(20),ui.dp(16),ui.dp(20),ui.dp(8))}

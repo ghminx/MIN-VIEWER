@@ -63,6 +63,10 @@ class MainActivity : Activity() {
     private var loadGeneration = 0
     private var hwpMode = "single"
     private var hwpZoom = 1f
+    private var hwpInkSnapshot:HwpPdfSnapshot?=null
+    private var hwpInkPreparing=false
+    private var hwpEncrypted=false
+    private var hwpInkError:String?=null
     private var hwpSearchMessage = ""
     private var hwpSearchQuery = ""
     private var pendingHwpZoomRestore = false
@@ -224,6 +228,8 @@ class MainActivity : Activity() {
     }
 
     private fun showHome() {
+        hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute{it.directory.deleteRecursively()}};hwpInkSnapshot=null
+        hwpInkPreparing=false
         viewerControls.closeSearch()
         loadGeneration++
         viewerControls.setDocumentNotice("")
@@ -445,6 +451,8 @@ class MainActivity : Activity() {
         pendingWebDocument = false
         val launchOffice = autoOpenOffice
         autoOpenOffice = false
+        hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute {it.directory.deleteRecursively()}};hwpInkSnapshot=null
+        hwpInkPreparing=false;hwpEncrypted=false;hwpInkError=null
         val generation = ++loadGeneration
         val requestMimeType = incomingMimeType
         val source = DocumentSource(UUID.randomUUID().toString(), uri)
@@ -582,6 +590,65 @@ class MainActivity : Activity() {
         } else showPage(pageIndex + direction)
     }
 
+    private fun beginHwpInk() {
+        if(pageCount<=0||hwpInkPreparing)return
+        if(hwpEncrypted){viewerControls.setDocumentNotice("암호 한글 문서의 필기는 아직 지원하지 않습니다.");return}
+        val originalUri=documentUri?:return
+        val generation=loadGeneration
+        val selected=pageIndex
+        val count=pageCount
+        val name=selectedName
+        hwpInkPreparing=true;hwpInkError=null
+        viewerControls.setReadingAction(false,false){beginHwpInk()}
+        indicator.text="불러오는 중 · 한글 필기 배경 준비"
+        val snapshot=HwpPdfSnapshot(this,count,{index,receive->
+            if(generation==loadGeneration&&!isDestroyed)browser?.evaluateJavascript("window.annotationPage($index,$generation)",receive)
+        }) {result->
+            val job=hwpInkSnapshot
+            hwpInkSnapshot=null
+            result.fold(onSuccess={background->
+                PdfInkStore.io.execute {
+                    var source:java.io.File?=null
+                    try {
+                        if(generation!=loadGeneration||isDestroyed)throw java.io.InterruptedIOException()
+                        source=java.io.File.createTempFile("hwp-source-",".${name.substringAfterLast('.')}",cacheDir)
+                        val digest=java.security.MessageDigest.getInstance("SHA-256")
+                        (contentResolver.openInputStream(originalUri)?:throw java.io.IOException("한글 원본을 읽을 수 없습니다.")).use {input->source.outputStream().use {output->
+                            val buffer=ByteArray(65536);var size=0L
+                            while(true){
+                                if(generation!=loadGeneration||isDestroyed)throw java.io.InterruptedIOException()
+                                val bytes=input.read(buffer);if(bytes<0)break
+                                size+=bytes;require(size<=512L*1024*1024){"원본 문서의 크기 제한을 초과했습니다."}
+                                digest.update(buffer,0,bytes);output.write(buffer,0,bytes)
+                            }
+                            output.fd.sync()
+                        }}
+                        require(digest.digest().joinToString(""){"%02x".format(it)}==job?.sourceDigest){"읽은 뒤 원본 파일이 변경되었습니다. 문서를 다시 열어 주세요."}
+                        val engine=java.security.MessageDigest.getInstance("SHA-256")
+                        assets.open("rhwp/rhwp_bg.wasm").use {input->val buffer=ByteArray(65536);while(true){val size=input.read(buffer);if(size<0)break;engine.update(buffer,0,size)}}
+                        val profile="rhwp/${engine.digest().joinToString(""){"%02x".format(it)}}/AndroidSVG/1.4/AndroidPdf/${android.os.Build.VERSION.SDK_INT}"
+                        val note=PdfInkStore(java.io.File(filesDir,"pdf-notes")).createDocument(source,background,name,count,profile){generation!=loadGeneration||isDestroyed}
+                        runOnUiThread {
+                            if(generation==loadGeneration&&!isDestroyed){
+                                val uri=Uri.parse("content://$packageName.pdfnotes/${note.id}")
+                                recent.remove(originalUri);recent.add(uri,name);recent.updateView(uri,selected,"1",1f)
+                                hwpInkPreparing=false
+                                startActivity(Intent(this,PdfActivity::class.java).setData(uri).putExtra("name",name).putExtra("restore_page",selected).putExtra("restore_mode",1).putExtra("start_ink",true),android.app.ActivityOptions.makeCustomAnimation(this,0,0).toBundle())
+                                showHome()
+                            }
+                        }
+                    }catch(error:Exception){runOnUiThread {if(generation==loadGeneration&&!isDestroyed){hwpInkPreparing=false;hwpInkError="한글 필기 준비 실패: ${error.message}";indicator.text=hwpInkError;viewerControls.setReadingAction(false,true){beginHwpInk()}}}}
+                    finally{source?.delete();background.parentFile?.deleteRecursively()}
+                }
+            },onFailure={error->
+                hwpInkPreparing=false;hwpInkError="한글 필기 준비 실패: ${error.message}";indicator.text=hwpInkError
+                viewerControls.setReadingAction(false,true){beginHwpInk()}
+                job?.let {PdfInkStore.io.execute {it.directory.deleteRecursively()}}
+            })
+        }
+        hwpInkSnapshot=snapshot;snapshot.start()
+    }
+
     private fun searchHwp() {
         viewerControls.showSearch(hwpSearchQuery,context="한글 문서 검색",next={hwpNextSearch.performClick()},closed={
             hwpSearchMessage="";hwpNextSearch.visibility=View.GONE
@@ -645,6 +712,7 @@ class MainActivity : Activity() {
             documentUri?.let { recent.add(it, selectedName) }
             openingRecent = false
             val isHwp = selectedName.endsWith(".hwp", true) || selectedName.endsWith(".hwpx", true)
+            if(isHwp)viewerControls.setReadingAction(false,true){beginHwpInk()}
             hwpSearch.visibility = if (isHwp) View.VISIBLE else View.GONE
             hwpModes.visibility = if (isHwp) View.VISIBLE else View.GONE
             list.adapter = HwpPageAdapter()
@@ -694,6 +762,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun onHwpPasswordRequired(generation: Int, retry: Boolean) = runOnUiThread {
             val source = documentSource
             if (this.generation != browserGeneration || generation != loadGeneration || source == null || isDestroyed || isFinishing) return@runOnUiThread
+            hwpEncrypted=true
             UiStyle(this@MainActivity).passwordDialog("한글 비밀번호",if(retry)"비밀번호가 맞지 않거나 암호 데이터가 손상되었습니다."else null,cancel={showHome()}) {password->
                     if (this.generation == browserGeneration && generation == loadGeneration && documentSource == source) {
                         val url = "/document/${source.token}"
@@ -713,7 +782,7 @@ class MainActivity : Activity() {
     }
 
     private fun showHwpPosition() {
-        indicator.text = "${pageIndex + 1}/$pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
+        indicator.text = if(hwpInkPreparing)"불러오는 중 · 한글 필기 배경 준비"else hwpInkError?:"${pageIndex + 1}/$pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
         indicator.contentDescription = "${pageIndex + 1} / $pageCount · ${(hwpZoom * 100).toInt()}%$hwpSearchMessage"
         documentUri?.let { recent.updateView(it, pageIndex, hwpMode, hwpZoom) }
         (list.adapter as? BaseAdapter)?.notifyDataSetChanged()
@@ -758,6 +827,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute{it.directory.deleteRecursively()}};hwpInkSnapshot=null
         loadGeneration++
         documentSource = null
         worker.shutdownNow()

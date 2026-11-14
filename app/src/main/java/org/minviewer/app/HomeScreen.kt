@@ -105,7 +105,7 @@ class HomeScreen(
     }
 
     private fun showLicenses() {
-        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지", "OpenSymbol 글꼴 고지", "기타 글꼴 라이선스", "Redland 계열 고지", "네이티브 구성 요소 고지", "한글 수식 글꼴 고지", "Rust 표준 라이브러리 고지", "PDFBox-Android 및 포함 자료 고지", "Pretendard UI 글꼴 고지")
+        val labels = arrayOf("출처 및 소스 안내", "LibreOffice 및 제3자 고지", "rhwp 라이선스", "rhwp 의존성 고지", "수식 문자 대응표 고지", "libexttextcat 라이선스", "rhwp 전이 의존성 고지", "OpenSymbol 글꼴 고지", "기타 글꼴 라이선스", "Redland 계열 고지", "네이티브 구성 요소 고지", "한글 수식 글꼴 고지", "Rust 표준 라이브러리 고지", "PDFBox-Android 및 포함 자료 고지", "Pretendard UI 글꼴 고지", "AndroidSVG 벡터 출력 고지")
         AlertDialog.Builder(activity).setTitle("오픈소스 라이선스").setItems(labels) { _, index ->
             if (index == 0) {
                 AlertDialog.Builder(activity).setTitle(labels[index]).setMessage(
@@ -132,7 +132,8 @@ class HomeScreen(
                     11 -> "licenses/rhwp-font-notices.txt"
                     12 -> "licenses/rust-standard-library.html"
                     13 -> "licenses/pdfbox/notices.txt"
-                    else -> "licenses/pretendard.txt"
+                    14 -> "licenses/pretendard.txt"
+                    else -> "licenses/androidsvg.txt"
                 }
                 val web = WebView(activity).apply {
                     settings.javaScriptEnabled = false

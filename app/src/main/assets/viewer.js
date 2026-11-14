@@ -7,6 +7,7 @@ const context = document.createElement('canvas').getContext('2d');
 globalThis.measureTextWidth = (font, text) => { context.font = font; return context.measureText(text).width; };
 
 let documentHandle;
+let sourceDigest = '';
 let views = [];
 let rhwpReady;
 let sequence = 0;
@@ -69,6 +70,27 @@ function hwpSvg(index, includeHighlights = true) {
     }
     return svg;
 }
+
+window.annotationPage = (index, generation) => {
+    try {
+        if (!documentHandle || generation !== activeGeneration || !Number.isInteger(index) || index < 0 || index >= views.length) throw new Error('열린 문서의 페이지가 변경되었습니다.');
+        const info = JSON.parse(documentHandle.getPageInfo(index));
+        const svg = hwpSvg(index, false);
+        // AndroidSVG 1.4의 ENTITY_REF 토큰 누락을 피하고 원래 문자값 유지
+        for (const element of svg.querySelectorAll('text, tspan')) {
+            for (const node of Array.from(element.childNodes)) {
+                if (node.nodeType !== 3 || !/[&<>]/.test(node.data)) continue;
+                const document = node.ownerDocument;
+                const fragment = document.createDocumentFragment();
+                const parts = node.data.split(']]>');
+                parts.forEach((part, index) => fragment.appendChild(document.createCDATASection(
+                    (index > 0 ? '>' : '') + part + (index < parts.length - 1 ? ']]' : ''))));
+                node.parentNode.replaceChild(fragment, node);
+            }
+        }
+        return {width: info.width, height: info.height, digest: sourceDigest, svg: new XMLSerializer().serializeToString(svg)};
+    } catch (error) { return {error: String(error.message || error)}; }
+};
 
 window.renderHwpThumbnail = (index, generation) => {
     if (!documentHandle || generation !== activeGeneration || !Number.isInteger(index) || index < 0 || index >= views.length) return;
@@ -301,6 +323,8 @@ window.openDocument = async (url, name, generation, password = null) => {
         rhwpReady ||= initRhwp({module_or_path: '/rhwp/rhwp_bg.wasm'});
         await rhwpReady;
         if (request !== sequence) return;
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
+        if (request !== sequence) return;
         const handle = password === null ? new HwpDocument(bytes) : HwpDocument.openWithPassword(bytes, password);
         let availableViews;
         try {
@@ -314,6 +338,7 @@ window.openDocument = async (url, name, generation, password = null) => {
             throw new Error('표시할 페이지가 없습니다.');
         }
         documentHandle = handle;
+        sourceDigest = digest;
         previewRequested = false;
         activeGeneration = generation;
         views = availableViews;

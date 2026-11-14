@@ -16,7 +16,7 @@ try {
     Run '.\gradlew.bat' @(':app:assembleDebug', '--offline')
     Run 'python' @('-c',"import sys;sys.path.insert(0,'.research/py');import pymupdf as f;d=f.open();p=d.new_page(width=600,height=800);p.insert_text((40,70),'BACKUP SOURCE');d.save('.research/pdf-ink-test/backup-source.pdf')")
     $stdlib = Get-ChildItem '.research/gradle-home/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib' -Filter '*.jar' -Recurse | Select-Object -First 1 -ExpandProperty FullName
-    Run 'javac' @('--release','8','-classpath',".research/sdk/platforms/android-35/android.jar;app/build/tmp/kotlin-classes/debug;$stdlib",'-d',"$work/backup-classes",'tests/InkBackupProbe.java','tests/DocumentOutputProbe.java','tests/PresentationBackupProbe.java')
+    Run 'javac' @('--release','8','-classpath',".research/sdk/platforms/android-35/android.jar;app/build/tmp/kotlin-classes/debug;$stdlib",'-d',"$work/backup-classes",'tests/InkBackupProbe.java','tests/DocumentOutputProbe.java','tests/PresentationBackupProbe.java','tests/DocumentSourceBackupProbe.java')
     $classes = @(Get-ChildItem "$work/backup-classes" -Filter '*.class' | ForEach-Object FullName)
     Run '.research/sdk/build-tools/35.0.0/d8.bat' (@('--lib','.research/sdk/platforms/android-35/android.jar','--classpath',$stdlib,'--output',"$work/backup-dex") + $classes)
     Run 'jar' @('cf',"$work/backup-probe.jar",'-C',"$work/backup-dex",'classes.dex')
@@ -33,5 +33,6 @@ try {
     Run $adb @('shell','CLASSPATH=/data/local/tmp/min-ink-target.apk:/data/local/tmp/min-backup-probe.jar app_process /system/bin InkBackupProbe /data/local/tmp/min-backup-test /data/local/tmp/min-backup-source.pdf')
     Run $adb @('shell','CLASSPATH=/data/local/tmp/min-ink-target.apk:/data/local/tmp/min-backup-probe.jar app_process /system/bin DocumentOutputProbe /data/local/tmp/min-backup-test')
     Run $adb @('shell','CLASSPATH=/data/local/tmp/min-ink-target.apk:/data/local/tmp/min-backup-probe.jar app_process /system/bin PresentationBackupProbe /data/local/tmp/min-backup-test /data/local/tmp/min-backup-source.pptx /data/local/tmp/min-backup-source.pdf')
+    Run $adb @('shell','CLASSPATH=/data/local/tmp/min-ink-target.apk:/data/local/tmp/min-backup-probe.jar app_process /system/bin DocumentSourceBackupProbe /data/local/tmp/min-backup-test /data/local/tmp/min-backup-source.pptx /data/local/tmp/min-backup-source.pdf')
     if (!$StorageOnly) { Run 'node' @('tests/pdf-notes-integration.mjs') }
 } finally { Pop-Location }

@@ -852,27 +852,57 @@ class PdfActivity : Activity() {
         return false
     }
 
-    private fun drawInk(canvas: Canvas, image: ImageView, page: Int) {
-        val drawable = image.drawable ?: return
-        val strokes = (selectionPreview?.documentStrokes ?: inkGestureStrokes ?: inkNote?.strokes).orEmpty().filterIndexed { index, stroke -> stroke.page == page && index !in erasedStrokes } +
-            listOfNotNull(activeStroke?.takeIf { it.page == page })
-        val saved = canvas.save()
-        canvas.concat(image.imageMatrix)
-        canvas.clipRect(0, 0, drawable.intrinsicWidth, drawable.intrinsicHeight)
+    private class InkLayer {
+        val node = android.graphics.RenderNode("완료된 페이지 필기").apply { setUseCompositingLayer(true, null) }
+        var strokes: List<InkStroke>? = null
+        var drawable: android.graphics.drawable.Drawable? = null
+        val matrix = android.graphics.Matrix()
+    }
+
+    private fun drawStrokes(canvas: Canvas, strokes: List<InkStroke>, page: Int, width: Int, height: Int) {
         for (stroke in strokes) {
+            if (stroke.page != page) continue
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = stroke.color; strokeWidth = stroke.width * minOf(drawable.intrinsicWidth, drawable.intrinsicHeight)
+                color = stroke.color; strokeWidth = stroke.width * minOf(width, height)
                 style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
                 if (stroke.tool == "highlighter") blendMode = android.graphics.BlendMode.MULTIPLY
             }
             val path = android.graphics.Path()
             stroke.points.forEachIndexed { i, p ->
-                val x = p.x * drawable.intrinsicWidth; val y = p.y * drawable.intrinsicHeight
+                val x = p.x * width; val y = p.y * height
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
-            if (stroke.points.size == 1) { paint.style = Paint.Style.FILL; val p = stroke.points[0]; canvas.drawCircle(p.x * drawable.intrinsicWidth, p.y * drawable.intrinsicHeight, paint.strokeWidth / 2, paint) }
+            if (stroke.points.size == 1) { paint.style = Paint.Style.FILL; val p = stroke.points[0]; canvas.drawCircle(p.x * width, p.y * height, paint.strokeWidth / 2, paint) }
             else canvas.drawPath(path, paint)
         }
+    }
+
+    private fun drawInk(canvas: Canvas, image: ImageView, page: Int, layer: InkLayer? = null) {
+        val drawable = image.drawable ?: return
+        val strokes = (selectionPreview?.documentStrokes ?: inkGestureStrokes ?: inkNote?.strokes).orEmpty()
+        val cached = layer != null && canvas.isHardwareAccelerated && selectionPreview == null && erasedStrokes.isEmpty() && strokes.isNotEmpty()
+        if (!cached) layer?.strokes = null
+        if (cached) {
+            requireNotNull(layer)
+            if (layer.strokes !== strokes || layer.drawable !== drawable || layer.matrix != image.imageMatrix || layer.node.width != image.width || layer.node.height != image.height) {
+                layer.node.setPosition(0, 0, image.width, image.height)
+                val recording = layer.node.beginRecording()
+                try {
+                    recording.concat(image.imageMatrix)
+                    recording.clipRect(0, 0, drawable.intrinsicWidth, drawable.intrinsicHeight)
+                    // 형광펜 MULTIPLY를 원본 배경과 함께 합성하고 확대 시 현재 화면 해상도로 다시 기록
+                    drawable.draw(recording)
+                    drawStrokes(recording, strokes, page, drawable.intrinsicWidth, drawable.intrinsicHeight)
+                } finally { layer.node.endRecording() }
+                layer.strokes = strokes; layer.drawable = drawable; layer.matrix.set(image.imageMatrix)
+            }
+            canvas.drawRenderNode(layer.node)
+        }
+        val saved = canvas.save()
+        canvas.concat(image.imageMatrix)
+        canvas.clipRect(0, 0, drawable.intrinsicWidth, drawable.intrinsicHeight)
+        if (!cached) drawStrokes(canvas, if (erasedStrokes.isEmpty()) strokes else strokes.filterIndexed { index, _ -> index !in erasedStrokes }, page, drawable.intrinsicWidth, drawable.intrinsicHeight)
+        activeStroke?.takeIf { it.page == page }?.let { drawStrokes(canvas, listOf(it), page, drawable.intrinsicWidth, drawable.intrinsicHeight) }
         val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(0, 135, 155); style = Paint.Style.STROKE
             strokeWidth = 2 * resources.displayMetrics.density / image.imageMatrix.mapRadius(1f)
@@ -1064,7 +1094,9 @@ class PdfActivity : Activity() {
 
     private fun updateStatus() {
         status.text = "${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
-        val kind=if(intent.data?.authority=="$packageName.pdfnotes"&&intent.getStringExtra("name")?.endsWith(".pptx",true)==true)"PPT"else"PDF"
+        val kind=if(intent.data?.authority=="$packageName.pdfnotes")when(intent.getStringExtra("name")?.substringAfterLast('.')?.lowercase()) {
+            "pptx"->"PPT";"docx"->"Word";"hwp","hwpx"->"한글";else->"PDF"
+        }else"PDF"
         status.contentDescription = "$kind ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
         val currentView = Triple(pageIndex, mode, zoom)
         if (persistenceReady && currentView != lastSavedView) {
@@ -1389,9 +1421,10 @@ class PdfActivity : Activity() {
                 val key = "$index:$renderWidth"
                 val generation = renderGeneration
                 val image = object : ImageView(this@PdfActivity) {
+                    private val inkLayer = InkLayer()
                     override fun onDraw(canvas: Canvas) {
                         super.onDraw(canvas)
-                        drawInk(canvas, this, index)
+                        drawInk(canvas, this, index, inkLayer)
                         val bitmap = drawable ?: return
                         if (index != highlightedPage) return
                         val area = RectF(0f, 0f, bitmap.intrinsicWidth.toFloat(), bitmap.intrinsicHeight.toFloat())

@@ -33,6 +33,7 @@ run('push','.research/pdf-ink-test/lasso.pdf',`/sdcard/Download/${source}`);
 run('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE','-d',`file:///sdcard/Download/${source}`);
 try {
  run('shell','wm','size','1000x1600');run('shell','wm','density','160');
+ run('shell','am','force-stop','com.google.android.documentsui');run('shell','am','force-stop','com.android.documentsui');
  run('shell','am','force-stop','org.minviewer.app');
  run('shell','am','start','-n','org.minviewer.app/.MainActivity');
  tap(await wait(/파일 열기/),'파일 열기');tap(await wait(/content-desc="(?:Search|검색)"/),'(?:Search|검색)');
@@ -41,7 +42,7 @@ try {
  const file=picker.match(new RegExp(`<node[^>]*text="${title}"[^>]*class="android.widget.TextView"[^>]*>`))?.[0];
  const b=file?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(b,'시스템 파일 선택기의 시험 PDF 필요');
  run('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));
- let xml=await wait(/PDF 1 \/ 3/);tap(xml,'더보기');xml=await wait(/필기 시작/);tap(xml,'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
+ let xml=await wait(/PDF 1 \/ 3/);tap(xml,'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  tap(screen(),'색상');xml=await wait(/파랑/);tap(xml,'파랑');tap(await wait(/파랑, 선택됨/),'펜 설정 닫기');await wait(/content-desc="펜, 선택됨"/);
  gesture(300,700,600,700);await wait(/필기 저장 완료/);
  tap(screen(),'색상');xml=await wait(/빨강/);tap(xml,'빨강');tap(await wait(/빨강, 선택됨/),'펜 설정 닫기');await wait(/content-desc="펜, 선택됨"/);
@@ -104,7 +105,7 @@ try {
  run('shell','wm','size','1600x1000');await wait(/필기 복원 완료/);
  assert.doesNotMatch(screen(),/text="복사"/);const landscape=metrics('landscape');assert.ok(landscape.blue && landscape.red);
  run('shell','input','keyevent','BACK');run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity');
- xml=await wait(new RegExp(title));tap(xml,title);await wait(/PDF 2 \/ 3/);
+ xml=await wait(new RegExp(`${title} 관리`));tap(xml,`${title} 관리`);tap(await wait(/문서 열기/),'문서 열기');await wait(/PDF 2 \/ 3/);
  assert.doesNotMatch(screen(),/content-desc="펜, 선택됨"/);
  tap(screen(),'필기 시작');await wait(/content-desc="읽기 모드로 전환"/);
  assert.deepEqual(metrics('reopened'),landscape);assert.doesNotMatch(screen(),/text="복사"/);

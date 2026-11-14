@@ -15,7 +15,7 @@ public class PresentationBackupProbe {
         File root=new File(args[0],"ppt-"+UUID.randomUUID());PdfInkStore store=new PdfInkStore(root);
         File source=new File(args[1]),snapshot=new File(args[2]);
         byte[] original=Files.readAllBytes(source.toPath()),pdf=Files.readAllBytes(snapshot.toPath());
-        PdfInkNote created=store.createPresentation(source,snapshot,"original.pptx",1,"test-build",()->false);
+        PdfInkNote created=store.createDocument(source,snapshot,"original.pptx",1,"test-build",()->false);
         PdfInkNote saved=new PdfInkNote(created.getId(),created.getName(),1,Collections.singletonList(new InkStroke(0,.004f,0xffff0000,
             Arrays.asList(new InkPoint(.2f,.3f,.7f,100),new InkPoint(.6f,.5f,.9f,150)))));
         store.save(saved);ByteArrayOutputStream output=new ByteArrayOutputStream();store.backup(saved.getId(),output);
@@ -34,9 +34,9 @@ public class PresentationBackupProbe {
         files=InkBackupProbe.unpack(valid);manifest.put("version",1);files.put("manifest.json",manifest.toString().getBytes(StandardCharsets.UTF_8));reject(store,saved,InkBackupProbe.pack(files));
         files=InkBackupProbe.unpack(valid);manifest.put("version",2);manifest.getJSONObject("presentation").put("policy","unknown");files.put("manifest.json",manifest.toString().getBytes(StandardCharsets.UTF_8));reject(store,saved,InkBackupProbe.pack(files));
         int count=store.all().size();boolean canceled=false;
-        try{store.createPresentation(source,snapshot,"cancel.pptx",1,"test-build",()->true);}catch(Exception expected){check(expected instanceof InterruptedIOException,"wrong cancellation");canceled=true;}
+        try{store.createDocument(source,snapshot,"cancel.pptx",1,"test-build",()->true);}catch(Exception expected){check(expected instanceof InterruptedIOException,"wrong cancellation");canceled=true;}
         check(canceled&&store.all().size()==count,"canceled PPT creation published a note");
-        boolean mismatch=false;try{store.createPresentation(source,snapshot,"wrong-pages.pptx",2,"test-build",()->false);}catch(IllegalArgumentException expected){mismatch=true;}
+        boolean mismatch=false;try{store.createDocument(source,snapshot,"wrong-pages.pptx",2,"test-build",()->false);}catch(IllegalArgumentException expected){mismatch=true;}
         check(mismatch&&store.all().size()==count,"page mismatch published a note");
         check(Arrays.equals(original,Files.readAllBytes(source.toPath()))&&Arrays.equals(pdf,Files.readAllBytes(snapshot.toPath())),"PPT preparation changed inputs");
         System.out.println("PPT_CORRUPT_MISSING_PROFILE_CANCEL_PAGE_MISMATCH_SOURCE_SAFETY_PASS");

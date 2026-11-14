@@ -65,6 +65,7 @@ class OfficeActivity : Activity() {
     private var slidePanelAnimating = false
     private var document: Document? = null
     private var temporaryFile: File? = null
+    private var presentationSource: File? = null
     private var documentType = -1
     private var pageCount = 0
     private var pageIndex = 0
@@ -386,7 +387,15 @@ class OfficeActivity : Activity() {
                     if (type == Document.CALLBACK_DOCUMENT_PASSWORD) requestPassword(office, payload)
                 }
                 office.setOptionalFeatures(Document.LOK_FEATURE_DOCUMENT_PASSWORD)
-                val opened = office.documentLoad(file.absolutePath) ?: throw IOException("문서를 열 수 없습니다.")
+                val engineSource = if (extension == "pptx" && signature.contentEquals(zip)) {
+                    val prepared = File.createTempFile("lok-static-", ".pptx", cacheDir)
+                    presentationSource = prepared; activeFiles.add(prepared)
+                    if (PresentationPdfSource.create(file, prepared) { closed }) prepared else {
+                        prepared.delete(); activeFiles.remove(prepared); presentationSource = null
+                        file
+                    }
+                } else file
+                val opened = office.documentLoad(engineSource.absolutePath) ?: throw IOException("문서를 열 수 없습니다.")
                 document = opened
                 opened.initializeForRendering()
                 opened.setMessageCallback { type, payload -> handleSearchResult(type, payload) }
@@ -411,7 +420,7 @@ class OfficeActivity : Activity() {
                 runOnUiThread {
                     if (!closed) {
                         openedSuccessfully = true
-                        if(documentType==Document.DOCTYPE_PRESENTATION)controls.setReadingAction(false,true){beginPresentationInk()}
+                        if(documentType!=Document.DOCTYPE_SPREADSHEET)controls.setReadingAction(false,true){beginOfficeInk()}
                         setResult(RESULT_OK, Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                     }
                 }
@@ -489,13 +498,13 @@ class OfficeActivity : Activity() {
         if (!fontConfig.isFile || fontConfig.readText(Charsets.UTF_8) != configured) fontConfig.writeText(configured, Charsets.UTF_8)
     }
 
-    private fun beginPresentationInk() {
-        if(!openedSuccessfully||closed||inkPreparing||documentType!=Document.DOCTYPE_PRESENTATION)return
-        if(passwordAttempts>0){inkPreparationError=getString(R.string.ppt_ink_password_unsupported);updateStatus();return}
+    private fun beginOfficeInk() {
+        if(!openedSuccessfully||closed||inkPreparing||documentType==Document.DOCTYPE_SPREADSHEET)return
+        if(passwordAttempts>0){inkPreparationError=getString(R.string.office_ink_password_unsupported);updateStatus();return}
         inkPreparationError=null
         inkPreparing=true
-        controls.setReadingAction(false,false){beginPresentationInk()}
-        status.text=getString(R.string.ppt_ink_preparing)
+        controls.setReadingAction(false,false){beginOfficeInk()}
+        status.text=getString(R.string.office_ink_preparing)
         val selected=pageIndex
         worker.execute {
             var staged: File? = null
@@ -503,28 +512,28 @@ class OfficeActivity : Activity() {
                 val snapshot=File.createTempFile("lok-annotation-",".pdf",cacheDir)
                 staged=snapshot
                 activeFiles.add(snapshot)
-                val opened=document?:throw IOException("열린 PPT가 없습니다.")
-                val source=temporaryFile?:throw IOException("PPT 원본 사본이 없습니다.")
-                val sizes=(0 until pageCount).map { part ->
+                val opened=document?:throw IOException("열린 문서가 없습니다.")
+                val source=temporaryFile?:throw IOException("원본 사본이 없습니다.")
+                val sizes=if(documentType==Document.DOCTYPE_TEXT)pages.map {it[2].toDouble()/it[3]}else (0 until pageCount).map { part ->
                     if(closed)throw java.io.InterruptedIOException("작업을 취소했습니다.")
                     opened.setPart(part);opened.documentWidth.toDouble()/opened.documentHeight
                 }
-                opened.setPart(selected)
+                if(documentType!=Document.DOCTYPE_TEXT)opened.setPart(selected)
                 val options="""{"ExportHiddenSlides":{"type":"boolean","value":"true"},"ExportNotesPages":{"type":"boolean","value":"false"},"ExportOnlyNotesPages":{"type":"boolean","value":"false"},"ReduceImageResolution":{"type":"boolean","value":"false"},"UseLosslessCompression":{"type":"boolean","value":"true"}}"""
-                if(opened.saveAs(android.net.Uri.fromFile(snapshot).toString(),"pdf",options)==0)throw IOException("PPT 필기 배경을 PDF로 만들 수 없습니다.")
+                if(opened.saveAs(android.net.Uri.fromFile(snapshot).toString(),"pdf",options)==0)throw IOException("문서 필기 배경을 PDF로 만들 수 없습니다.")
                 android.os.ParcelFileDescriptor.open(snapshot,android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                     android.graphics.pdf.PdfRenderer(descriptor).use { pdf ->
-                        require(pdf.pageCount==pageCount){"PPT 슬라이드 수와 PDF 배경이 다릅니다."}
+                        require(pdf.pageCount==pageCount){"원본 문서와 PDF 배경의 페이지 수가 다릅니다."}
                         sizes.forEachIndexed { index,ratio -> pdf.openPage(index).use {
-                            require(kotlin.math.abs(it.width.toDouble()/it.height-ratio)<0.02){"PPT 슬라이드 비율이 달라 필기를 시작할 수 없습니다."}
+                            require(kotlin.math.abs(it.width.toDouble()/it.height-ratio)<0.02){"원본 페이지 비율이 달라 필기를 시작할 수 없습니다."}
                         } }
                     }
                 }
                 val build=assets.open("program/versionrc").bufferedReader().useLines { lines ->
                     lines.map(String::trim).firstOrNull{it.startsWith("buildid=")}?.substringAfter('=')
                 }?:throw IOException("문서 엔진의 빌드 정보를 읽을 수 없습니다.")
-                val name=intent.getStringExtra("name")?:"문서.pptx"
-                val note=PdfInkStore(File(filesDir,"pdf-notes")).createPresentation(source,snapshot,name,pageCount,"LibreOfficeKit/$build",{closed})
+                val name=intent.getStringExtra("name")?:if(documentType==Document.DOCTYPE_TEXT)"문서.docx"else"문서.pptx"
+                val note=PdfInkStore(File(filesDir,"pdf-notes")).createDocument(source,snapshot,name,pageCount,"LibreOfficeKit/$build",{closed})
                 val uri=android.net.Uri.parse("content://$packageName.pdfnotes/${note.id}")
                 runOnUiThread {
                     if(!closed){
@@ -537,8 +546,10 @@ class OfficeActivity : Activity() {
                         overridePendingTransition(0,0)
                     }
                 }
-            } catch(error:Exception){runOnUiThread{if(!closed){inkPreparing=false;inkPreparationError=getString(R.string.ppt_ink_prepare_failed,error.message);updateStatus();controls.setReadingAction(false,true){beginPresentationInk()}}}}
-            finally{staged?.let{it.delete();activeFiles.remove(it)}}
+            } catch(error:Exception){runOnUiThread{if(!closed){inkPreparing=false;inkPreparationError=getString(R.string.office_ink_prepare_failed,error.message);updateStatus();controls.setReadingAction(false,true){beginOfficeInk()}}}}
+            finally{
+                staged?.let{it.delete();activeFiles.remove(it)}
+            }
         }
     }
 
@@ -802,7 +813,7 @@ class OfficeActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = if(inkPreparing)getString(R.string.ppt_ink_preparing)else inkPreparationError ?: if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(pageIndex)?:"시트"} · ${pageIndex+1}/$pageCount · ${(zoom*100).toInt()}%"else"${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
+        status.text = if(inkPreparing)getString(R.string.office_ink_preparing)else inkPreparationError ?: if(documentType==Document.DOCTYPE_SPREADSHEET)"${sheetNames.getOrNull(pageIndex)?:"시트"} · ${pageIndex+1}/$pageCount · ${(zoom*100).toInt()}%"else"${pageIndex + 1}/$pageCount · ${(zoom * 100).toInt()}%"
         status.contentDescription = "LibreOffice ${pageIndex + 1} / $pageCount$pageLimit · ${(zoom * 100).toInt()}%$searchMessage"
         val uri = intent.data ?: return
         if (!openedSuccessfully) return
@@ -862,12 +873,18 @@ class OfficeActivity : Activity() {
                     setImageBitmap(cache.get(position))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(-1, 0, 1f))
-                item.addView(TextView(this@OfficeActivity).apply {
-                    text = if (position in failed) "미리보기 실패" else "${position + 1}번"+if(position==current)" · 현재"else""
+                val numberRow=LinearLayout(this@OfficeActivity).apply {gravity=android.view.Gravity.CENTER}
+                if(position==current)numberRow.addView(View(this@OfficeActivity).apply {
+                    background=android.graphics.drawable.GradientDrawable().apply {shape=android.graphics.drawable.GradientDrawable.OVAL;setColor(if(ui.dark)getColor(R.color.ui_accent_dark)else ui.navy)}
+                    importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },LinearLayout.LayoutParams(ui.dp(7),ui.dp(7)).apply {rightMargin=ui.dp(6)})
+                numberRow.addView(TextView(this@OfficeActivity).apply {
+                    text = if (position in failed) "미리보기 실패" else "${position + 1}번"
                     setTextColor(ui.text)
                     gravity = android.view.Gravity.CENTER
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 })
+                item.addView(numberRow)
                 if (cache.get(position) == null && position !in failed && !pending) {
                     pending = true
                     worker.execute {
@@ -1222,6 +1239,8 @@ class OfficeActivity : Activity() {
             activeFiles.remove(file)
         }
         temporaryFile = null
+        presentationSource?.let { file -> file.delete(); activeFiles.remove(file) }
+        presentationSource = null
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

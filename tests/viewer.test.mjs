@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
 
 const source = (await readFile(new URL('../app/src/main/assets/viewer.js', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '');
@@ -27,7 +28,7 @@ function setup({ failPageCount = false, pendingFetch = false, pendingBody = fals
         createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 1 }) }) }),
     };
     const context = vm.createContext({
-        window, document, Uint8Array, AbortController,
+        window, document, Uint8Array, AbortController, crypto: webcrypto,
         fetch: async (url, options) => {
             fetchedUrls.push(url);
             if (pendingFetch && url === '/pending') {

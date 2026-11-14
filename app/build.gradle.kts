@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    implementation("com.caverock:androidsvg-aar:1.4")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
         exclude(group = "org.bouncycastle")
     }

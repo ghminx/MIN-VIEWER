@@ -1,5 +1,5 @@
 <resources>
-    <string name="ppt_ink_password_unsupported">암호 PPT의 필기는 아직 지원하지 않습니다.</string>
-    <string name="ppt_ink_preparing">불러오는 중 · PPT 필기 배경 준비</string>
-    <string name="ppt_ink_prepare_failed">PPT 필기 준비 실패: %1$s</string>
+    <string name="office_ink_password_unsupported">암호 문서의 필기는 아직 지원하지 않습니다.</string>
+    <string name="office_ink_preparing">불러오는 중 · 문서 필기 배경 준비</string>
+    <string name="office_ink_prepare_failed">문서 필기 준비 실패: %1$s</string>
 </resources>

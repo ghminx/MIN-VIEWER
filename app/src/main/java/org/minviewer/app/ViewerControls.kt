@@ -154,11 +154,11 @@ class ViewerControls(
 
     fun setReadingAction(editing:Boolean,enabled:Boolean,toggle:()->Unit) {
         val button=readingAction?:action("읽기",toggle).apply {
-            setSingleLine();setPadding(ui.dp(4),0,ui.dp(4),0)
+            setSingleLine();setPadding(ui.dp(12),0,ui.dp(12),0)
         }.also {top.addView(it,2,LayoutParams(ui.dp(48),ui.dp(48)));readingAction=it}
-        button.text=if(editing)"필기"else"읽기";button.contentDescription=if(editing)"읽기 모드로 전환"else"필기 시작"
-        button.setTextColor(if(editing)ui.navy else Color.WHITE)
-        button.background=RippleDrawable(ColorStateList.valueOf(0x307f9fc9),ui.rounded(if(editing)Color.WHITE else Color.TRANSPARENT,20,if(editing)null else activity.getColor(R.color.ui_accent_dark)),null)
+        button.text="";button.contentDescription=if(editing)"읽기 모드로 전환"else"필기 시작"
+        button.setCompoundDrawablesRelative(ui.icon(if(editing)"펜"else"읽기",if(editing)activity.getColor(R.color.ui_accent_dark)else Color.WHITE),null,null,null)
+        button.background=RippleDrawable(ColorStateList.valueOf(0x307f9fc9),null,null)
         button.isSelected=editing;button.isEnabled=enabled;button.alpha=if(enabled)1f else .5f;button.setOnClickListener {toggle()}
     }
 

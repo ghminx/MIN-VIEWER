@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import {execFileSync,spawn} from 'node:child_process';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {setTimeout as delay} from 'node:timers/promises';
+
+const device=process.argv[2];assert.ok(device&&!device.startsWith('emulator-'),'명시적으로 선택한 실기기 필요');
+const adb='.research/sdk/platform-tools/adb.exe',work='.research/tablet-performance';
+const duration=Number(process.argv[3]||120000),label=process.argv[4]||'dense';assert.ok(duration>=1000&&duration<=900000);assert.match(label,/^[a-z0-9-]+$/);
+const run=(...a)=>execFileSync(adb,['-s',device,...a],{encoding:'utf8',timeout:60000,maxBuffer:8*1024*1024});
+const id=readFileSync(`${work}/dense-id.txt`,'utf8').trim();assert.match(id,/^[a-f0-9-]{36}$/);
+const root=`files/pdf-notes/${id}`;
+const note=()=>JSON.parse(run('exec-out','run-as','org.minviewer.app','cat',`${root}/note.json`));
+const screen=()=>{const d=run('shell','uiautomator','dump','/sdcard/min-tablet-dense.xml');return d.includes('dumped to')?run('shell','cat','/sdcard/min-tablet-dense.xml'):'';};
+const wait=async re=>{for(let i=0;i<30;i++){const x=screen();if(re.test(x))return x;await delay(300);}throw Error(String(re));};
+const tap=(xml,label)=>{const n=xml.match(new RegExp(`<node[^>]*(?:text|content-desc)="${label}"[^>]*>`))?.[0];const b=n?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(b,label);run('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));};
+const capture=name=>{run('shell','screencap','-p','/sdcard/min-tablet-dense.png');run('pull','/sdcard/min-tablet-dense.png',`${work}/${name}.png`);};
+const open=()=>{run('shell','am','force-stop','org.minviewer.app');run('shell','am','start','-n','org.minviewer.app/.MainActivity','-a','android.intent.action.VIEW','-t','application/pdf','-d',`content://org.minviewer.app.pdfnotes/${id}`);};
+const page=xml=>{const n=xml.match(/<node[^>]*content-desc="PDF 1쪽"[^>]*>/)?.[0];const b=n?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);assert.ok(b);return b.slice(1).map(Number);};
+const oldRotation=run('shell','settings','get','system','user_rotation').trim();
+const oldAuto=run('shell','settings','get','system','accelerometer_rotation').trim();
+try{
+ run('shell','settings','put','system','accelerometer_rotation','0');run('shell','settings','put','system','user_rotation','1');
+ open();tap(await wait(/PDF 1 \/ 3/),'필기 시작');let xml=await wait(/읽기 모드로 전환/);
+ const before=note();assert.ok(before.strokes.length>=1704);capture(`${label}-landscape-before`);
+ const [l,t,r,b]=page(xml),left=(l+r)/2-220,top=(t+b)/2-160;
+ run('shell','dumpsys','gfxinfo','org.minviewer.app','reset');
+ let log='';const input=spawn(adb,['-s',device,'shell','CLASSPATH=/data/local/tmp/min-tablet-tools.jar','app_process','/system/bin','InkSustainedGesture',String(duration),String(left),String(top),'440','300']);
+ input.stdout.on('data',v=>{log+=v;process.stdout.write(v);});input.stderr.on('data',v=>process.stderr.write(v));
+ assert.equal(await new Promise(resolve=>input.on('exit',resolve)),0);await wait(/필기 저장 완료/);
+ const match=log.match(/FINISHED elapsedMs=(\d+) strokes=(\d+) events=\d+ injectP50Ms=(\d+) injectP95Ms=(\d+) injectMaxMs=(\d+)/);assert.ok(match,log);
+ const saved=note();assert.equal(saved.strokes.length,before.strokes.length+ +match[2]);assert.deepEqual(saved.strokes.slice(0,before.strokes.length),before.strokes);
+ writeFileSync(`${work}/${label}-saved.json`,JSON.stringify(saved));capture(`${label}-landscape-after`);
+ const graphics=run('shell','dumpsys','gfxinfo','org.minviewer.app');
+ run('shell','settings','put','system','user_rotation','0');xml=await wait(/PDF 1 \/ 3/);capture(`${label}-portrait-before`);
+ const [pl,pt,pr,pb]=page(xml),cx=(pl+pr)/2,cy=(pt+pb)/2;
+ run('shell','CLASSPATH=/data/local/tmp/min-tablet-tools.jar','app_process','/system/bin','InkGesture','pen',String(cx-150),String(cy),String(cx+150),String(cy));
+ await wait(/필기 저장 완료/);const rotated=note();assert.equal(rotated.strokes.length,saved.strokes.length+1);assert.deepEqual(rotated.strokes.slice(0,saved.strokes.length),saved.strokes);capture(`${label}-portrait-after`);
+ open();await wait(/PDF 1 \/ 3/);assert.deepEqual(note(),rotated);capture(`${label}-reopened`);
+ const result={device,id,initial:before.strokes.length,added:+match[2],final:rotated.strokes.length,durationMs:+match[1],p50:+match[3],p95:+match[4],max:+match[5],graphics,log,forceStopRestore:true,portraitStroke:true};
+ writeFileSync(`${work}/${label}-result.json`,JSON.stringify(result,null,2));console.log(JSON.stringify({...result,graphics:undefined,log:undefined}));
+ assert.ok(result.p50<40&&result.p95<100,'밀집 필기 입력 대기 기준 초과');
+}finally{run('shell','settings','put','system','user_rotation',oldRotation);run('shell','settings','put','system','accelerometer_rotation',oldAuto);}
