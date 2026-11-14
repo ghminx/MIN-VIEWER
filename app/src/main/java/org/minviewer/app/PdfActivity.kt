@@ -584,6 +584,7 @@ class PdfActivity : Activity() {
             val ui=UiStyle(this@PdfActivity)
             inkStatus = ui.label("",12f,color=ui.muted).apply {
                 visibility = View.GONE
+                minLines = 1
                 setPadding(ui.dp(12),ui.dp(6),ui.dp(12),ui.dp(6))
             }
             inkTools = makeInkTools()
@@ -642,7 +643,12 @@ class PdfActivity : Activity() {
         inkPanel.orientation=if(inline)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         inkTools.layoutParams=if(inline)LinearLayout.LayoutParams(0,-2,1f)else LinearLayout.LayoutParams(-1,-2)
         inkStatus.layoutParams=LinearLayout.LayoutParams(if(inline)ui.dp(180)else -1,-2)
-        inkStatus.visibility=if(inkStatus.text.isNotBlank()&&(inkEnabled||notice))View.VISIBLE else View.GONE
+        // 저장 안내 유무와 무관한 문서 영역·확대율 유지
+        inkStatus.visibility=when {
+            inkStatus.text.isNotBlank()&&(inkEnabled||notice)->View.VISIBLE
+            expanded->View.INVISIBLE
+            else->View.GONE
+        }
         inkStatus.setTextColor(if(failed)ui.danger else ui.muted)
         inkRetry.visibility=if(failed&&inkDirty)View.VISIBLE else View.GONE
     }
