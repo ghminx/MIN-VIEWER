@@ -122,7 +122,7 @@ class PdfActivity : Activity() {
             }
             override fun onDoubleTap(event:MotionEvent):Boolean {
                 if(inkEnabled&&fingerInk)return false
-                setZoom(if(zoom>1f)1f else 2f,event.rawX,event.rawY)
+                setZoom(if(zoom>1f)1f else 2f,event.x,event.y)
                 return true
             }
         })
@@ -688,7 +688,7 @@ class PdfActivity : Activity() {
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {
             val bounds=android.graphics.Rect()
             touchOnOverlay=listOfNotNull(thumbnailPanel,if(::inkDock.isInitialized)inkDock else null).any {
-                it.visibility==View.VISIBLE&&it.getGlobalVisibleRect(bounds)&&bounds.contains(event.rawX.toInt(),event.rawY.toInt())
+                it.visibility==View.VISIBLE&&it.getGlobalVisibleRect(bounds)&&bounds.contains(event.x.toInt(),event.y.toInt())
             }
         }
         if(touchOnOverlay)return super.dispatchTouchEvent(event)
@@ -849,7 +849,8 @@ class PdfActivity : Activity() {
             for (j in 0 until row.childCount) {
                 val image = row.getChildAt(j) as? ImageView ?: continue
                 val bounds = android.graphics.Rect()
-                if (!image.getGlobalVisibleRect(bounds) || !bounds.contains(event.rawX.toInt(), event.rawY.toInt())) continue
+                // 창이 이동해도 루트 기준 영역과 같은 좌표로 입력 판정
+                if (!image.getGlobalVisibleRect(bounds) || !bounds.contains(event.x.toInt(), event.y.toInt())) continue
                 val drawable = image.drawable ?: continue
                 val point = inkPoint(image, event, 0) ?: continue
                 val area = RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
