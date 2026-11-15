@@ -150,6 +150,8 @@ class OfficeActivity : Activity() {
     private var inkPreparing = false
     private var inkPreparationError: String? = null
     private lateinit var controls: ViewerControls
+    private val presentationMode by lazy { PresentationMode(this, controls) { leavePresentation() } }
+    private var restorePresentation = false
     private var recentRegistered = false
     private var lastSavedView: ViewPosition? = null
 
@@ -164,6 +166,7 @@ class OfficeActivity : Activity() {
         viewportY = savedInstanceState?.getInt("viewportY") ?: intent.getIntExtra("restore_y", 0)
         zoom = savedInstanceState?.getFloat("zoom") ?: intent.getFloatExtra("restore_zoom", 1f)
         restoreSlidePanel = savedInstanceState?.getBoolean("slidePanel") ?: false
+        restorePresentation = savedInstanceState?.getBoolean("presentationActive") ?: false
         controls = ViewerControls(this, intent.getStringExtra("name") ?: "문서", { finish() }, { searchDocument() },
             {
                 when (documentType) {
@@ -172,8 +175,10 @@ class OfficeActivity : Activity() {
                     else -> showSlideList()
                 }
             },
-            listOf("다음 검색 결과" to { searchNext() }),
-            enabledMenuItem={name->!inkPreparing&&when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;else->openedSuccessfully}},onFit={setZoom(1f)})
+            (if(intent.getStringExtra("name")?.endsWith(".pptx", ignoreCase = true)==true) listOf("발표 모드" to { enterPresentation() }, "필기 시작" to { beginOfficeInk() }) else emptyList()) +
+                listOf("다음 검색 결과" to { searchNext() }),
+            enabledMenuItem={name->!inkPreparing&&when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;else->openedSuccessfully}},onFit={setZoom(1f)},
+            menuOrder=if(intent.getStringExtra("name")?.endsWith(".pptx",ignoreCase=true)==true)ViewerControls.PPT_MENU_ORDER else null)
         status = controls.status
         controls.setListNavigation {
             if(navigationDialog==null)when(documentType) {
@@ -246,7 +251,6 @@ class OfficeActivity : Activity() {
             setOnTouchListener { view, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        swipeVelocity?.recycle();swipeVelocity=android.view.VelocityTracker.obtain().apply{addMovement(event)}
                         if(swipeAnimationTarget>=0)return@setOnTouchListener true
                         image.animate().cancel()
                         turnPreview?.let{it.animate().cancel();documentArea.overlay.remove(it)};turnPreview=null
@@ -257,7 +261,6 @@ class OfficeActivity : Activity() {
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> { wasScaling = true;view.translationX=0f;view.parent.requestDisallowInterceptTouchEvent(true);true }
                     MotionEvent.ACTION_MOVE -> {
-                        swipeVelocity?.addMovement(event)
                         if(swipeAnimationTarget>=0)return@setOnTouchListener true
                         if (!wasScaling && (zoom > 1f || documentType == Document.DOCTYPE_SPREADSHEET)) {
                             panTo(pinchStartX - ((event.rawX - touchX) * tileWidth / view.width).toInt(),
@@ -274,7 +277,7 @@ class OfficeActivity : Activity() {
                     MotionEvent.ACTION_UP -> {
                         val dx = event.rawX - touchX
                         val dy = event.rawY - touchY
-                        swipeVelocity?.addMovement(event);swipeVelocity?.computeCurrentVelocity(1000)
+                        swipeVelocity?.computeCurrentVelocity(1000)
                         val speed=swipeVelocity?.xVelocity?:0f
                         swipeVelocity?.recycle();swipeVelocity=null
                         if(swipeAnimationTarget>=0)return@setOnTouchListener true
@@ -348,7 +351,7 @@ class OfficeActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setOnApplyWindowInsetsListener { view, insets ->
                 @Suppress("DEPRECATION")
-                view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
+                view.setPadding(0, if(presentationMode.active)0 else insets.systemWindowInsetTop, 0, if(presentationMode.active)0 else insets.systemWindowInsetBottom)
                 insets
             }
             addView(controls)
@@ -441,6 +444,7 @@ class OfficeActivity : Activity() {
                 runOnUiThread {
                     if (!closed) {
                         openedSuccessfully = true
+                        if (restorePresentation) { restorePresentation = false; enterPresentation() }
                         if(documentType!=Document.DOCTYPE_SPREADSHEET)controls.setReadingAction(false,true){beginOfficeInk()}
                         setResult(RESULT_OK, Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                     }
@@ -479,6 +483,7 @@ class OfficeActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(presentationMode.isExitGesture(event))return super.dispatchTouchEvent(event)
         if(inkPreparing)return super.dispatchTouchEvent(event)
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {
             val bounds=android.graphics.Rect()
@@ -490,6 +495,11 @@ class OfficeActivity : Activity() {
             if (::viewport.isInitialized) viewport.getLocationOnScreen(location)
             touchInDocument = ::viewport.isInitialized && event.rawX >= location[0] && event.rawX < location[0] + viewport.width &&
                 event.rawY >= location[1] && event.rawY < location[1] + viewport.height
+        }
+        if (touchInDocument) {
+            if(event.actionMasked==MotionEvent.ACTION_DOWN){swipeVelocity?.recycle();swipeVelocity=android.view.VelocityTracker.obtain()}
+            // 손가락을 따라 이동하는 image의 지역 좌표 대신 고정된 창 좌표로 속도 측정
+            swipeVelocity?.addMovement(event)
         }
         if (touchInDocument && ::scaleDetector.isInitialized) {
             if(event.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER)tapDetector.onTouchEvent(event)
@@ -657,7 +667,7 @@ class OfficeActivity : Activity() {
 
     @Deprecated("Android 뒤로 이동 처리")
     override fun onBackPressed() {
-        if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
+        if(presentationMode.active)leavePresentation() else if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
     }
 
     override fun onStop() {
@@ -692,6 +702,17 @@ class OfficeActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun enterPresentation() {
+        closeSlidePanel?.invoke()
+        controls.closeSearch()
+        presentationMode.enter()
+        setZoom(1f)
+    }
+
+    private fun leavePresentation() {
+        presentationMode.leave()
     }
 
     private fun showPage(index: Int, x: Int = 0, y: Int = 0) {
@@ -1337,6 +1358,7 @@ class OfficeActivity : Activity() {
         outState.putInt("viewportX", viewportX)
         outState.putInt("viewportY", viewportY)
         outState.putFloat("zoom", zoom)
+        outState.putBoolean("presentationActive", presentationMode.active)
         outState.putBoolean("slidePanel", closeSlidePanel != null)
         super.onSaveInstanceState(outState)
     }

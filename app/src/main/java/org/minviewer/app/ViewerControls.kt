@@ -28,9 +28,12 @@ class ViewerControls(
     private val selectedViewMode: () -> String? = { null },
     private val enabledMenuItem: (String) -> Boolean = { true },
     private val onFit: (() -> Unit)? = null,
-    private val selectedMenuItem: ((String) -> Boolean)? = null
+    private val selectedMenuItem: ((String) -> Boolean)? = null,
+    private val menuOrder: List<String>? = null
 ) : LinearLayout(activity) {
     companion object {
+        val PPT_MENU_ORDER = listOf("발표 모드", "화면 맞춤", "필기 시작", "손가락 필기", "필기 저장 다시 시도", "읽기 모드", "필기 포함 PDF 내보내기", "문서 백업")
+
         fun pageTapDirection(x: Float, width: Int) = when {
             x < width * .24f -> -1
             x > width * .76f -> 1
@@ -207,9 +210,9 @@ class ViewerControls(
 
     private fun showMenu(anchor:View) {
         val views=listOf("한쪽 보기","두쪽 보기","페이지 넘김","세로 스크롤","첫 페이지를 표지로 보기","연속 보기","전체 페이지 보기")
-        fun section(name:String)=when {name in listOf("한쪽 보기","두쪽 보기")->"페이지 배치";name in listOf("페이지 넘김","세로 스크롤")->"이동 방식";name in views||name in listOf("화면 맞춤","문자 인코딩")->"보기";name.contains("필기")||name=="읽기 모드"||name.contains("백업")->"필기·사본";else->"탐색"}
-        val actions=menuItems+
-            listOfNotNull(onFit?.let {"화면 맞춤" to it})
+        fun section(name:String)=when {name in listOf("한쪽 보기","두쪽 보기")->"페이지 배치";name in listOf("페이지 넘김","세로 스크롤")->"이동 방식";name in views||name in listOf("화면 맞춤","문자 인코딩","발표 모드")->"보기";name.contains("필기")||name=="읽기 모드"||name.contains("백업")->"필기·사본";else->"탐색"}
+        val available=menuItems+listOfNotNull(onFit?.let {"화면 맞춤" to it})
+        val actions=menuOrder?.map {name->name to available.firstOrNull {it.first==name}?.second} ?: available
         val body=LinearLayout(activity).apply {orientation=VERTICAL;setPadding(ui.dp(6),ui.dp(6),ui.dp(6),ui.dp(6))}
         val scroll=ScrollView(activity).apply {addView(body)}
         val visible=Rect();anchor.getWindowVisibleDisplayFrame(visible)
@@ -226,11 +229,11 @@ class ViewerControls(
             for((name,call) in items) {
                 val selected=selectedMenuItem?.invoke(name)?: (name==selectedViewMode())
                 val kind=when {name=="세로 스크롤"->"연속 보기";name=="페이지 넘김"->"다음";name=="첫 페이지를 표지로 보기"->"읽기";name in listOf("한쪽 보기","두쪽 보기","연속 보기","화면 맞춤")->name;name in views->"격자";name.contains("내보내기")->"내보내기";name.contains("백업")->"백업";name.contains("필기")->"펜";name.contains("검색")->"검색";else->"목록"}
-                body.addView(ui.button(name){popup.dismiss();call()}.apply {
+                body.addView(ui.button(name){popup.dismiss();call?.invoke()}.apply {
                     gravity=Gravity.CENTER_VERTICAL or Gravity.START;textSize=14f
                     minHeight=ui.dp(48);setPadding(ui.dp(12),ui.dp(8),ui.dp(12),ui.dp(8))
                     setCompoundDrawablesRelative(ui.icon(kind),null,if(selected)ui.icon("선택")else null,null);compoundDrawablePadding=ui.dp(10)
-                    isSelected=selected;isEnabled=enabledMenuItem(name)
+                    isSelected=selected;isEnabled=call!=null&&enabledMenuItem(name)
                     alpha=if(isEnabled)1f else .4f
                     contentDescription=name+if(selected)", 선택됨"else""
                 },LayoutParams(-1,-2))

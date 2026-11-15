@@ -512,8 +512,8 @@ window.showPage = (index, animate = false, duration = 220) => {
                 const incoming = slot.dataset.row === nextRow;
                 const from = offset + (incoming ? direction * window.innerWidth : 0);
                 const to = incoming ? 0 : -direction * window.innerWidth;
-                const animation = slot.animate([{transform: `translateX(${from}px)`}, {transform: `translateX(${to}px)`}], {duration, easing: 'ease-out'});
-                animation.onfinish = () => { if (motion === hwpMotionGeneration && --remaining === 0) {showHwpRow(index);hwpDragOffset=0;} };
+                const animation = slot.animate([{transform: `translateX(${from}px)`}, {transform: `translateX(${to}px)`}], {duration, easing: 'ease-out', fill: 'forwards'});
+                animation.onfinish = () => { if (motion === hwpMotionGeneration && --remaining === 0) {showHwpRow(index);hwpDragOffset=0;cancelHwpAnimations();} };
                 hwpAnimations.push(animation);
             }
         } else {cancelHwpAnimations();hwpDragOffset=0;showHwpRow(index);}

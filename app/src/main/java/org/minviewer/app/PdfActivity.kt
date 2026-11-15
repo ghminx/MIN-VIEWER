@@ -75,6 +75,11 @@ class PdfActivity : Activity() {
     private var pageIndex = 0
     private var mode = 1
     private var viewing = PageViewing()
+    private val isPptDocument by lazy { intent.getStringExtra("name")?.endsWith(".pptx", ignoreCase = true) == true }
+    private val presentationMode by lazy { PresentationMode(this, controls) { leavePresentation() } }
+    private var previousPresentationView: PageViewing? = null
+    private var previousPresentationInk = false
+    private var restorePresentation = false
     @Suppress("DEPRECATION")
     private val wordSnapshot: WordSnapshot? by lazy {
         (lastNonConfigurationInstance as? ViewerSession)?.wordSnapshot
@@ -466,8 +471,9 @@ class PdfActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
-        viewing = PageViewing.load(this, requireNotNull(intent.data))
+        viewing = if(isPptDocument)PageViewing() else PageViewing.load(this, requireNotNull(intent.data))
         mode = viewing.columns(resources.configuration.screenWidthDp, resources.configuration.screenHeightDp)
+        restorePresentation = savedInstanceState?.getBoolean("presentationActive") ?: false
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
         restoreOverview = savedInstanceState?.getBoolean("pageOverview") ?: false
         zoom = if(savedInstanceState!=null)1f else intent.getFloatExtra("restore_zoom", 1f)
@@ -484,7 +490,7 @@ class PdfActivity : Activity() {
         val title=(intent.getStringExtra("name")?:"PDF").let {if(intent.data?.authority=="$packageName.pdfnotes")it.removePrefix("[필기] ")else it}
         controls = ViewerControls(this, title, { finish() }, { searchDocument() },
             { showThumbnails() },
-            listOf("한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "페이지 넘김" to { changeViewing(viewing.copy(scrolling=false)) }, "세로 스크롤" to { changeViewing(viewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeViewing(viewing.copy(cover=!viewing.cover)) },
+            listOf("발표 모드" to { enterPresentation() }, "한쪽 보기" to { setMode(1) }, "두쪽 보기" to { setMode(2) }, "페이지 넘김" to { changeViewing(viewing.copy(scrolling=false)) }, "세로 스크롤" to { changeViewing(viewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeViewing(viewing.copy(cover=!viewing.cover)) },
                 "필기 시작" to { beginInk() }, "손가락 필기" to {
                     inkStatus.visibility = View.VISIBLE
                     if (inkNote == null) { inkStatus.text = "먼저 필기 시작을 선택해 주세요." }
@@ -495,7 +501,8 @@ class PdfActivity : Activity() {
                 "필기 포함 PDF 내보내기" to {openInkActions("export")}, "문서 백업" to {openInkActions("backup")},
                 "다음 검색 결과" to { nextSearchResult() }),
             selectedMenuItem={name->when(name){"한쪽 보기"->mode==1;"두쪽 보기"->mode==2;"페이지 넘김"->!viewing.scrolling;"세로 스크롤"->viewing.scrolling;"첫 페이지를 표지로 보기"->viewing.cover;else->false}},
-            enabledMenuItem={name->when(name){"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->canSearchNext;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)})
+            enabledMenuItem={name->when(name){"발표 모드"->openedSuccessfully&&!inkDirty&&!inkPreparing&&intent.getStringExtra("name")?.substringAfterLast('.', "")?.lowercase() !in listOf("docx", "hwp", "hwpx");"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->canSearchNext;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)},
+            menuOrder=if(isPptDocument)ViewerControls.PPT_MENU_ORDER else null)
         status = controls.status
         controls.setListNavigation {if(thumbnailPanel==null&&pageOverview==null)showThumbnails()}
         controls.setLocationAction {controls.showPageJump(pageIndex,pageCount)}
@@ -591,7 +598,7 @@ class PdfActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setOnApplyWindowInsetsListener { view, insets ->
                 @Suppress("DEPRECATION")
-                view.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
+                view.setPadding(0, if(presentationMode.active)0 else insets.systemWindowInsetTop, 0, if(presentationMode.active)0 else insets.systemWindowInsetBottom)
                 insets
             }
             addView(controls)
@@ -701,6 +708,7 @@ class PdfActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(presentationMode.isExitGesture(event))return super.dispatchTouchEvent(event)
         updateStylusEraser(event)
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {
             val bounds=android.graphics.Rect()
@@ -1200,6 +1208,7 @@ class PdfActivity : Activity() {
                         list.post {
                             if (!closed) {
                                 persistenceReady = true
+                                if (restorePresentation) { restorePresentation = false; enterPresentation() }
                                 updateStatus()
                             }
                         }
@@ -1243,7 +1252,7 @@ class PdfActivity : Activity() {
 
     @Deprecated("Android 뒤로 이동 처리")
     override fun onBackPressed() {
-        if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
+        if(presentationMode.active)leavePresentation() else if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
     }
 
     override fun onStop() {
@@ -1328,10 +1337,31 @@ class PdfActivity : Activity() {
 
     private fun setMode(value: Int) = changeViewing(viewing.copy(landscapePages=value))
 
-    private fun changeViewing(value: PageViewing) {
+    private fun enterPresentation() {
+        previousPresentationView = viewing
+        previousPresentationInk = inkEnabled
+        if (thumbnailPanel != null && thumbnailExpanded) showThumbnails()
+        pageOverview?.dismiss()
+        controls.closeSearch()
+        inkEnabled = false
+        updateInkChrome()
+        presentationMode.enter()
+        changeViewing(PageViewing(), persist = false)
+    }
+
+    private fun leavePresentation() {
+        val original = previousPresentationView ?: return
+        presentationMode.leave()
+        inkEnabled = previousPresentationInk
+        updateInkChrome()
+        previousPresentationView = null
+        changeViewing(original, persist = false)
+    }
+
+    private fun changeViewing(value: PageViewing, persist: Boolean = true) {
         val selected=pageIndex
         viewing=value
-        intent.data?.let {viewing.save(this,it)}
+        if(persist) intent.data?.let {viewing.save(this,it)}
         mode=viewing.columns(resources.configuration.screenWidthDp,resources.configuration.screenHeightDp)
         clearInkSelection();pendingTarget=null;navigationGeneration++
         zoom=1f;pageOffsetX=0f;pageOffsetY=0f
@@ -1351,7 +1381,7 @@ class PdfActivity : Activity() {
         }else"PDF"
         status.contentDescription = "$kind ${pageIndex + 1} / $pageCount · ${(zoom * 100).toInt()}%$searchMessage"
         val currentView = Triple(pageIndex, mode, zoom)
-        if (persistenceReady && currentView != lastSavedView) {
+        if (persistenceReady && !presentationMode.active && currentView != lastSavedView) {
             intent.data?.let { recent.updateView(it, pageIndex, mode.toString(), zoom) }
             lastSavedView = currentView
         }
@@ -1895,7 +1925,8 @@ class PdfActivity : Activity() {
         outState.putFloat("zoom", zoom)
         outState.putFloat("pageOffsetX", pageOffsetX)
         outState.putFloat("pageOffsetY", pageOffsetY)
-        outState.putBoolean("inkEnabled", inkEnabled)
+        outState.putBoolean("presentationActive", presentationMode.active)
+        outState.putBoolean("inkEnabled", if(presentationMode.active)previousPresentationInk else inkEnabled)
         outState.putBoolean("fingerInk", fingerInk)
         outState.putInt("penColor", penColor)
         outState.putFloat("penWidth", penWidth)
