@@ -998,8 +998,7 @@ class PdfActivity : Activity() {
         val page=image.getTag(R.id.pdf_page_index) as Int
         val size=pageDimensions[page]?:return
         val original=InkSelection(clipboard.strokes.indices.toSet(),clipboard.strokes)
-        val pasted=original.transferred(page,point.x,point.y,clipboard.width.toFloat()/size.first,clipboard.height.toFloat()/size.second,
-            minOf(clipboard.width,clipboard.height).toFloat()/minOf(size.first,size.second))
+        val pasted=original.transferred(page,point.x,point.y,clipboard.width to clipboard.height,size)
         if(pasted==null){android.widget.Toast.makeText(this,"선택한 필기가 이 페이지보다 큽니다.",android.widget.Toast.LENGTH_SHORT).show();return}
         val strokes=note.strokes+pasted.documentStrokes
         commitInk(strokes);inkSelection=InkSelection((note.strokes.size until strokes.size).toSet(),strokes)
@@ -1046,7 +1045,7 @@ class PdfActivity : Activity() {
                 val page=image.getTag(R.id.pdf_page_index) as Int
                 val from=pageDimensions[selection.page]?:return null;val to=pageDimensions[page]?:return null
                 return selection.transferred(page,(x-target.left)/target.width(),(y-target.top)/target.height(),
-                    from.first.toFloat()/to.first,from.second.toFloat()/to.second,minOf(from.first,from.second).toFloat()/minOf(to.first,to.second))
+                    from,to)
             }
         }
         return null

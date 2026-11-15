@@ -1,8 +1,8 @@
-# v1.0.0~v1.1 배포 라이선스 검토
+# v1.0.0~v1.1.1 배포 라이선스 검토
 
 ## 확인 범위
 
-- 대상: GitHub `v1.0.0`~`v1.0.5` 베타와 `v1.1` ARM64 APK 및 해당 빌드 환경임. `v1.0.3` 이후 고지를 보완하며 LibreOffice 엔진 변경은 없음.
+- 대상: GitHub `v1.0.0`~`v1.0.5` 베타와 `v1.1`·`v1.1.1` ARM64 APK 및 해당 빌드 환경임. `v1.0.3` 이후 고지를 보완하며 LibreOffice 엔진 변경은 없음. `v1.1.1`에서 엔진·제3자 의존성·글꼴 변경은 없음.
 - APK에는 LibreOfficeKit, rhwp 및 해당 구성 요소의 고지와 글꼴이 포함됨.
 - LibreOffice 원본 고지 HTML과 rhwp 고지는 APK 자산 및 앱 설정의 라이선스 화면에서 확인 가능함.
 - LibreOffice 원본 태그는 `libreoffice-26.2.6.3`, 커밋은 `8221e31b3ac356a1623c672912a3d2b492f7e3d1`임. 실제 LibreOffice 소스의 수정 파일 두 개에 저장소의 [패치](../patches/libreoffice-26.2-cfb4-read.patch)가 적용된 상태임을 확인함.

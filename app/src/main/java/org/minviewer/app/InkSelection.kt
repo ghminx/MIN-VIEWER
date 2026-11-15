@@ -21,7 +21,10 @@ class InkSelection(val indices: Set<Int>, val documentStrokes: List<InkStroke>) 
     }
 
     /** 실제 문서 크기 비율을 적용하고 대상 페이지 내부로 선택 전체 이동. */
-    fun transferred(targetPage:Int,centerX:Float,centerY:Float,ratioX:Float,ratioY:Float,widthRatio:Float):InkSelection? {
+    fun transferred(targetPage:Int,centerX:Float,centerY:Float,sourceSize:Pair<Int,Int>,targetSize:Pair<Int,Int>):InkSelection? {
+        val ratioX=sourceSize.first.toFloat()/targetSize.first
+        val ratioY=sourceSize.second.toFloat()/targetSize.second
+        val widthRatio=minOf(sourceSize.first,sourceSize.second).toFloat()/minOf(targetSize.first,targetSize.second)
         val width=bounds.width()*ratioX;val height=bounds.height()*ratioY
         if(width>1f||height>1f)return null
         val x=centerX.coerceIn(width/2,1f-width/2)

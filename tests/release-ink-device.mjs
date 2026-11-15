@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {createDevice,node,box} from './support/android-device.mjs';
+import {selectDownload,escapePattern as esc} from './support/document-picker.mjs';
+
+const serial=process.env.MIN_TEST_DEVICE;
+assert.ok(serial && process.env.MIN_TEST_PHYSICAL==='1','명시적 실기기 선택 필요');
+const d=createDevice({serial,physical:true,dumpPath:'/sdcard/min-release-ink-test.xml',attempts:35});
+const {run,screen,wait,tap}=d;
+const out=`.research/release-ink-device/${serial}`;mkdirSync(out,{recursive:true});
+const sources={pdf:'.research/release/verify-v1.1/upgrade.pdf',pptx:'.research/engine-poc/02_quarterly_review_ko.pptx',docx:'.research/quality/nasa-report.docx',hwp:'.research/engine-poc/real.hwp',hwpx:'.research/engine-poc/sample.hwpx'};
+const start=()=>{run('shell','am','force-stop','org.minviewer.app');
+    run('shell','am','start','-W','-n','org.minviewer.app/.MainActivity');};
+const save=async(label)=>{tap(await wait(new RegExp(label)),label);
+    let x=await wait(/documentsui|표시용 사본 만들기/);if(/표시용 사본 만들기/.test(x)){tap(x,'표시용 사본 만들기');x=await wait(/documentsui/);}const edit=x.match(/<node[^>]*class="android.widget.EditText"[^>]*>/)?.[0];
+    const filename=edit?.match(/text="([^"]+)"/)?.[1];
+    assert.ok(filename&&filename.startsWith('MIN-release-check-'),'고유 시험 파일 이름 필요');
+    tap(x,'(?:SAVE|저장)');
+    await wait(label==='백업'?/백업 저장 완료/:/PDF 저장 완료/);
+    const path=run('shell','find','/sdcard/Download','/sdcard/Documents','-maxdepth','3','-name',filename).trim();
+    assert.ok(path&&!path.includes('\n'));
+    run('pull',path,`${out}/${filename}`);return `${out}/${filename}`;};
+const runId=process.env.MIN_TEST_RUN_ID;
+assert.ok(runId,'출력·복원 시험의 같은 MIN_TEST_RUN_ID 필요');
+const kinds=(process.argv[2]||'pdf,pptx,docx,hwp,hwpx').split(',');
+const results=[];
+const report={serial,runId,kinds,complete:false,results};
+writeFileSync(`${out}/results.json`,JSON.stringify(report,null,2));
+await d.withRotation(process.env.MIN_TEST_FINGER==='1'?0:1,async()=>{
+ for(const kind of kinds){
+  assert.ok(sources[kind]);
+    const name=`MIN-release-check-${kind}-${Date.now()}.${kind}`;
+    run('push',sources[kind],`/sdcard/Download/${name}`);
+    run('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE','-d',`file:///sdcard/Download/${name}`);
+    run('shell','am','force-stop','com.google.android.documentsui');
+    run('shell','am','force-stop','com.android.documentsui');start();
+    tap(await wait(/파일 열기/),'파일 열기');
+    await selectDownload(d,name);
+    await wait(/(?:PDF|LibreOffice|Word|한글|1 \/)/);
+    tap(await wait(/필기 시작/),'필기 시작');
+    let x=await wait(/읽기 모드로 전환/);if(process.env.MIN_TEST_FINGER==='1'){tap(x,'필기 도구 메뉴');
+    tap(await wait(/손가락 필기/),'손가락 필기');x=screen();}const b=box(node(x,'PDF 1쪽'));
+    assert.ok(b,'필기 페이지 영역 필요');
+    const x1=Math.round(b[0]+(b[2]-b[0])*.48),x2=Math.round(b[0]+(b[2]-b[0])*.52),y=Math.round(b[1]+(b[3]-b[1])*.5);if(process.env.MIN_TEST_FINGER==='1')run('shell','input','swipe',String(x1),String(y),String(x2),String(y),'500');else run('shell','CLASSPATH=/data/local/tmp/min-ink-gesture.jar','app_process','/system/bin','InkGesture','pen',String(x1),String(y),String(x2),String(y));
+    await wait(/필기 저장 완료/);
+    run('shell','input','keyevent','BACK');x=await wait(new RegExp(`${esc(name)} 관리`));
+    tap(x,`${esc(name)} 관리`);
+  const backup=await save('백업');
+    const pdf=await save('PDF 내보내기');
+  execFileSync('python',['tests/release-output-quality.py',backup,pdf],{stdio:'inherit'});
+  results.push({kind,name,backup,pdf});writeFileSync(`${out}/results.json`,JSON.stringify(report,null,2));console.log(`${kind} INK_BACKUP_EXPORT_PASS`);
+ }
+});
+report.complete=true;
+writeFileSync(`${out}/results.json`,JSON.stringify(report,null,2));
