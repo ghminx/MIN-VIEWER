@@ -15,6 +15,13 @@ test('덤프 실패 시 이전 XML을 읽지 않음',()=>{
     assert.equal(calls.length,1);
     assert.equal(calls[0].includes('cat'),false);
 });
+test('덤프 완료 메시지 뒤 137 종료도 새 XML을 확인',()=>{
+    const device=createDevice({serial:'emulator-5554'},(_,args)=>{
+        if(args.includes('dump'))throw Object.assign(new Error('killed'),{status:137,stdout:'UI hierchary dumped to: /sdcard/test.xml'});
+        return '<hierarchy></hierarchy>';
+    });
+    assert.equal(device.screen(),'<hierarchy></hierarchy>');
+});
 test('시나리오 실패 시 기존 회전과 자동 회전을 복원',async()=>{
     const calls=[];
     const device=createDevice({serial:'emulator-5554'},(_,args)=>{

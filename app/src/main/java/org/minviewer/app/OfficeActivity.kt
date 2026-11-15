@@ -179,6 +179,11 @@ class OfficeActivity : Activity() {
                 listOf("다음 검색 결과" to { searchNext() }),
             enabledMenuItem={name->!inkPreparing&&when(name){"다음 검색 결과"->highlight!=null&&!searchPending&&!searchDismissed;else->openedSuccessfully}},onFit={setZoom(1f)},
             menuOrder=if(intent.getStringExtra("name")?.endsWith(".pptx",ignoreCase=true)==true)ViewerControls.PPT_MENU_ORDER else null)
+        if(intent.getStringExtra("name")?.endsWith(".xlsx",ignoreCase=true)==true && intent.data?.authority!="$packageName.imports") {
+            controls.addImportAction {
+                startDocumentImport(this,intent.data,intent.getStringExtra("name"))
+            }
+        }
         status = controls.status
         controls.setListNavigation {
             if(navigationDialog==null)when(documentType) {
@@ -472,13 +477,26 @@ class OfficeActivity : Activity() {
                         slideList.visibility = View.VISIBLE
                     }
                 }
-                if(documentType==Document.DOCTYPE_TEXT&&extension=="docx"&&passwordAttempts==0) {
+                val previewSource=uri.authority!="$packageName.imports" && uri.authority!="$packageName.pdfnotes"
+                if(documentType==Document.DOCTYPE_TEXT&&extension=="docx"&&(passwordAttempts==0||previewSource) ||
+                    documentType==Document.DOCTYPE_PRESENTATION&&extension=="pptx"&&previewSource) {
                     openWordPageViewer(opened,file)
                 }else drawPage(pageIndex.coerceIn(0, pageCount - 1), viewportX, viewportY, zoom, renderGeneration.incrementAndGet())
             } catch (error: Exception) {
                 closeDocument()
                 if (!closed) runOnUiThread { if (!closed) status.text = "LibreOffice 오류: ${error.message}" }
             }
+        }
+    }
+
+    @Deprecated("Android 문서 보관 결과 처리")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        val uri=if(requestCode==42 && resultCode==RESULT_OK)data?.data else null
+        if(uri!=null) {
+            val name=data?.getStringExtra("name") ?: intent.getStringExtra("name")
+            intent.setData(uri).putExtra("name",name)
+            recreate()
         }
     }
 
@@ -538,17 +556,20 @@ class OfficeActivity : Activity() {
         var launched=false
         try {
             val background=File(directory,"background.pdf")
-            val options="""{"ReduceImageResolution":{"type":"boolean","value":"false"},"UseLosslessCompression":{"type":"boolean","value":"true"}}"""
+            val presentation=documentType==Document.DOCTYPE_PRESENTATION
+            val ratios=if(presentation) (0 until pageCount).map {part->opened.setPart(part);opened.documentWidth.toDouble()/opened.documentHeight}
+                else pages.map {it[2].toDouble()/it[3]}
+            val options="""{"ExportHiddenSlides":{"type":"boolean","value":"true"},"ExportNotesPages":{"type":"boolean","value":"false"},"ExportOnlyNotesPages":{"type":"boolean","value":"false"},"ReduceImageResolution":{"type":"boolean","value":"false"},"UseLosslessCompression":{"type":"boolean","value":"true"}}"""
             check(opened.saveAs(android.net.Uri.fromFile(background).toString(),"pdf",options)!=0){"Word 페이지를 준비할 수 없습니다."}
             android.os.ParcelFileDescriptor.open(background,android.os.ParcelFileDescriptor.MODE_READ_ONLY).use {descriptor->
                 android.graphics.pdf.PdfRenderer(descriptor).use {pdf->
                     check(pdf.pageCount==pageCount){"Word 페이지 수가 달라졌습니다."}
-                    pages.forEachIndexed {index,rect->pdf.openPage(index).use {page->
-                        check(kotlin.math.abs(page.width.toDouble()/page.height-rect[2].toDouble()/rect[3])<0.02){"Word 페이지 비율이 달라졌습니다."}
+                    ratios.forEachIndexed {index,ratio->pdf.openPage(index).use {page->
+                        check(kotlin.math.abs(page.width.toDouble()/page.height-ratio)<0.02){"문서 페이지 비율이 달라졌습니다."}
                     }}
                 }
             }
-            source.copyTo(File(directory,"source.docx"))
+            source.copyTo(File(directory,if(presentation)"source.pptx" else "source.docx"))
             val build=assets.open("program/versionrc").bufferedReader().useLines {lines->lines.map(String::trim).firstOrNull{it.startsWith("buildid=")}?.substringAfter('=')}
                 ?:throw IOException("문서 엔진의 빌드 정보를 읽을 수 없습니다.")
             File(directory,"profile.txt").writeText("LibreOfficeKit/$build")
@@ -601,7 +622,12 @@ class OfficeActivity : Activity() {
                     lines.map(String::trim).firstOrNull{it.startsWith("buildid=")}?.substringAfter('=')
                 }?:throw IOException("문서 엔진의 빌드 정보를 읽을 수 없습니다.")
                 val name=intent.getStringExtra("name")?:if(documentType==Document.DOCTYPE_TEXT)"문서.docx"else"문서.pptx"
-                val note=PdfInkStore(File(filesDir,"pdf-notes")).createDocument(source,snapshot,name,pageCount,"LibreOfficeKit/$build",{closed})
+                val noteStore=PdfInkStore(File(filesDir,"pdf-notes"))
+                val note=noteStore.createDocument(source,snapshot,name,pageCount,"LibreOfficeKit/$build",{closed})
+                if(intent.data?.authority=="$packageName.imports") {
+                    try {ImportedDocumentStore(File(filesDir,"imported-documents")).attachNote(requireNotNull(intent.data?.lastPathSegment),note.id)}
+                    catch(error:Exception) {noteStore.delete(note.id);throw error}
+                }
                 val uri=android.net.Uri.parse("content://$packageName.pdfnotes/${note.id}")
                 runOnUiThread {
                     if(!closed){

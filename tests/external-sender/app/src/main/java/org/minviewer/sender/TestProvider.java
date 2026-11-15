@@ -33,7 +33,7 @@ public class TestProvider extends ContentProvider {
     }
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
-        if (name == null || !(name.matches("sample\\.(csv|pdf|hwp|hwpx|pptx|docx|xlsx)") || "pipe.pdf".equals(name) || "single.csv".equals(name)) || !"r".equals(mode)) throw new FileNotFoundException();
+        if (name == null || !(name.matches("sample\\.(csv|pdf|hwp|hwpx|pptx|docx|xlsx)") || name.matches("MIN-external-[0-9]+\\.pdf") || "pipe.pdf".equals(name) || "single.csv".equals(name)) || !"r".equals(mode)) throw new FileNotFoundException();
         if ("single.csv".equals(name) && singleOpenCount++ > 0) throw new FileNotFoundException("시험 스트림을 다시 열 수 없습니다.");
         File file = new File(getContext().getFilesDir(), name);
         if (!"pipe.pdf".equals(name)) return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);

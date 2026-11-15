@@ -1,6 +1,7 @@
 package org.minviewer.app
 
 import android.app.Activity
+import android.content.Intent
 import android.app.AlertDialog
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -74,6 +75,7 @@ class PdfActivity : Activity() {
     private var pageCount = 0
     private var pageIndex = 0
     private var mode = 1
+    private val isPreview by lazy { intent.data?.authority !in listOf("$packageName.pdfnotes", "$packageName.imports") }
     private var viewing = PageViewing()
     private val isPptDocument by lazy { intent.getStringExtra("name")?.endsWith(".pptx", ignoreCase = true) == true }
     private val presentationMode by lazy { PresentationMode(this, controls) { leavePresentation() } }
@@ -81,10 +83,11 @@ class PdfActivity : Activity() {
     private var previousPresentationInk = false
     private var restorePresentation = false
     @Suppress("DEPRECATION")
-    private val wordSnapshot: WordSnapshot? by lazy {
+    private val wordSnapshotHolder = lazy {
         (lastNonConfigurationInstance as? ViewerSession)?.wordSnapshot
             ?: intent.getStringExtra("word_snapshot")?.let { WordSnapshot.open(cacheDir, it) }
     }
+    private val wordSnapshot: WordSnapshot? by wordSnapshotHolder
     private var documentAreaWidth = 0
     private var documentAreaHeight = 0
     private var restorePanel = false
@@ -414,6 +417,10 @@ class PdfActivity : Activity() {
                 else (contentResolver.openInputStream(uri) ?: throw IOException("파일을 읽을 수 없습니다.")).use {
                     inkStore.create(it, intent.getStringExtra("name") ?: "문서.pdf", pageCount)
                 }
+                if(uri.authority=="$packageName.imports") {
+                    try {ImportedDocumentStore(File(filesDir,"imported-documents")).attachNote(requireNotNull(uri.lastPathSegment),note.id)}
+                    catch(error:Exception) {inkStore.delete(note.id);throw error}
+                }
                 runOnUiThread {
                     if (!closed) {
                         inkPreparing = false
@@ -471,7 +478,7 @@ class PdfActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (ThemePreferences.isDark(this)) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         pageIndex = savedInstanceState?.getInt("page") ?: intent.getIntExtra("restore_page", 0)
-        viewing = if(isPptDocument)PageViewing() else PageViewing.load(this, requireNotNull(intent.data))
+        viewing = if(isPreview)PageViewing(scrolling=true) else if(isPptDocument)PageViewing() else PageViewing.load(this, requireNotNull(intent.data))
         mode = viewing.columns(resources.configuration.screenWidthDp, resources.configuration.screenHeightDp)
         restorePresentation = savedInstanceState?.getBoolean("presentationActive") ?: false
         restorePanel = savedInstanceState?.getBoolean("thumbnailPanel") ?: false
@@ -503,6 +510,9 @@ class PdfActivity : Activity() {
             selectedMenuItem={name->when(name){"한쪽 보기"->mode==1;"두쪽 보기"->mode==2;"페이지 넘김"->!viewing.scrolling;"세로 스크롤"->viewing.scrolling;"첫 페이지를 표지로 보기"->viewing.cover;else->false}},
             enabledMenuItem={name->when(name){"발표 모드"->openedSuccessfully&&!inkDirty&&!inkPreparing&&intent.getStringExtra("name")?.substringAfterLast('.', "")?.lowercase() !in listOf("docx", "hwp", "hwpx");"두쪽 보기"->openedSuccessfully&&resources.configuration.screenWidthDp>resources.configuration.screenHeightDp;"필기 포함 PDF 내보내기","문서 백업"->inkNote!=null&&!inkDirty&&!inkPreparing;"다음 검색 결과"->canSearchNext;"필기 저장 다시 시도"->inkNote!=null&&inkDirty;"읽기 모드","손가락 필기"->inkEnabled;"필기 시작"->openedSuccessfully&&!inkEnabled&&!inkPreparing;else->openedSuccessfully}},onFit={val selected=pageIndex;setZoom(1f);showPage(selected)},
             menuOrder=if(isPptDocument)ViewerControls.PPT_MENU_ORDER else null)
+        if(isPreview)controls.setPreview {
+            startDocumentImport(this,intent.data,intent.getStringExtra("name"))
+        }
         status = controls.status
         controls.setListNavigation {if(thumbnailPanel==null&&pageOverview==null)showThumbnails()}
         controls.setLocationAction {controls.showPageJump(pageIndex,pageCount)}
@@ -1238,6 +1248,25 @@ class PdfActivity : Activity() {
         }
     }
 
+    @Deprecated("Android 문서 보관 결과 처리")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode!=42 || resultCode!=RESULT_OK)return
+        val uri=data?.data ?: return
+        val name=data.getStringExtra("name") ?: return
+        intent.data?.let {previous -> if(previous.authority!="$packageName.imports" && previous.authority!="$packageName.pdfnotes")recent.remove(previous)}
+        if(wordSnapshot!=null && uri.authority=="$packageName.imports") {
+            recent.add(uri,name)
+            startActivity(Intent(this,OfficeActivity::class.java).setData(uri).putExtra("name",name)
+                .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT or Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            finish()
+            return
+        }
+        intent.data=uri;intent.putExtra("name",name)
+        recent.add(uri,name)
+        recreate()
+    }
+
     private fun saveResult() {
         if (openedSuccessfully) {
             setResult(RESULT_OK, android.content.Intent().setData(intent.data).putExtra("name", intent.getStringExtra("name"))
@@ -1956,7 +1985,7 @@ class PdfActivity : Activity() {
         worker.shutdown()
         cache.evictAll()
         thumbnails.evictAll()
-        if(!isChangingConfigurations)wordSnapshot?.let {snapshot->PdfInkStore.io.execute {snapshot.close();WordSnapshot.cleanup(cacheDir)}}
+        if(!isChangingConfigurations && wordSnapshotHolder.isInitialized())wordSnapshot?.let {snapshot->PdfInkStore.io.execute {snapshot.close();WordSnapshot.cleanup(cacheDir)}}
         super.onDestroy()
     }
 }

@@ -97,7 +97,7 @@ class PdfNotesActivity : Activity() {
             if(initial=="backup"){prepareBackup(item);return}
         }
         heading.text=item?.name?.removePrefix("[필기] ")?:if(noteId==null)"백업 복원"else"문서 관리"
-        status.text = session.message.ifEmpty { item?.error ?: if(noteId==null)"문서와 필기가 포함된 MIN VIEWER 백업을 선택해 주세요."else if(item==null)"보관된 문서를 찾을 수 없습니다."else"원본 문서는 유지하고 사본을 내보내거나 백업할 수 있습니다." }
+        status.text = session.message.ifEmpty { item?.error ?: if(noteId==null)"문서와 필기가 포함된 백업 또는 읽기용 문서 백업을 선택해 주세요. 백업은 자동 저장과 별도로 만든 파일입니다."else if(item==null)"보관된 문서를 찾을 수 없습니다."else"원본 문서는 유지하고 사본을 내보내거나 백업할 수 있습니다." }
         status.setTextColor(if(session.message.contains("실패")||item?.error!=null) ui.danger else ui.muted)
         cancelButton.visibility = if (session.busy) View.VISIBLE else View.GONE
         actions.removeAllViews()
@@ -168,6 +168,13 @@ class PdfNotesActivity : Activity() {
             val storage = store; val history = RecentDocuments(applicationContext)
             val uri = Uri.parse("content://$packageName.pdfnotes/${item.id}")
             work("필기 문서 삭제 중") {
+                val importId=intent.getStringExtra("import_id")
+                if(importId!=null) {
+                    val imports=ImportedDocumentStore(File(filesDir,"imported-documents"))
+                    require(imports.get(importId).noteId==item.id) { "보관 문서와 필기 연결이 일치하지 않습니다." }
+                    imports.delete(importId)
+                    history.remove(Uri.parse("content://$packageName.imports/$importId"))
+                }
                 val cleaned = storage.delete(item.id); history.remove(uri)
                 Result(if (cleaned) "필기 문서 삭제 완료" else "보관함에서 삭제됨 · 일부 임시 파일 정리 필요")
             }
@@ -237,9 +244,18 @@ class PdfNotesActivity : Activity() {
         } else if (requestCode == 2) {
             work("백업 검사·복원 중") {
                 val input = resolver.openInputStream(uri) ?: throw IOException("백업 파일을 읽을 수 없습니다.")
-                val restored = input.use { storage.restore(it) { current.canceled || current.abandoned } }
-                RecentDocuments(applicationContext).add(Uri.parse("content://$packageName.pdfnotes/${restored.id}"),restored.name)
-                Result("복원 완료: ${restored.name}")
+                input.buffered().use { backup ->
+                    if (BackupType.detect(backup) == "metadata.properties") {
+                        val restored = ImportedDocumentStore(File(filesDir, "imported-documents"))
+                            .restore(backup) { current.canceled || current.abandoned }
+                        RecentDocuments(applicationContext).add(Uri.parse("content://$packageName.imports/${restored.id}"), restored.name)
+                        Result("복원 완료: ${restored.name}")
+                    } else {
+                        val restored = storage.restore(backup) { current.canceled || current.abandoned }
+                        RecentDocuments(applicationContext).add(Uri.parse("content://$packageName.pdfnotes/${restored.id}"), restored.name)
+                        Result("복원 완료: ${restored.name}")
+                    }
+                }
             }
         }
     }

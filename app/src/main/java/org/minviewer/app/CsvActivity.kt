@@ -1,6 +1,7 @@
 package org.minviewer.app
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.net.Uri
@@ -69,6 +70,9 @@ class CsvActivity : Activity() {
         controls = ViewerControls(this, intent.getStringExtra("name") ?: "CSV 문서", { finish() }, null,
             { showRowJump() },
             listOf("행으로 이동" to {showRowJump()}, "문자 인코딩" to {showEncoding()}), enabledMenuItem={!loading},onFit={zoomFromButton(1f/zoom)})
+        if(intent.data?.authority!="$packageName.imports") controls.addImportAction {
+            startDocumentImport(this,intent.data,intent.getStringExtra("name"))
+        }
         controls.listButton.contentDescription="행으로 이동"
         controls.setLocationAction("행으로 이동"){showRowJump()}
         status=controls.status
@@ -150,6 +154,19 @@ class CsvActivity : Activity() {
             addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
         })
         loadPage(page)
+    }
+
+    @Deprecated("Android 파일 선택 결과 처리")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        val uri=if(requestCode==42 && resultCode==RESULT_OK)data?.data else null
+        if(uri!=null) {
+            intent.data?.let { RecentDocuments(this).remove(it) }
+            val name=data?.getStringExtra("name") ?: intent.getStringExtra("name")
+            RecentDocuments(this).add(uri,name ?: "문서.csv")
+            intent.setData(uri).putExtra("name",name)
+            recreate()
+        }
     }
 
     private fun showRowJump() {

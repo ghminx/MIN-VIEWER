@@ -190,7 +190,7 @@ class MainActivity : Activity() {
         emptyMessage = TextView(this).apply { text = "파일을 선택해 주세요."; setPadding(24, 24, 24, 24) }
         content.addView(emptyMessage, FrameLayout.LayoutParams(-1, -1))
         container.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        home = HomeScreen(this, recent, { pickDocument() }, { noteId -> startActivityForResult(Intent(this, PdfNotesActivity::class.java).putExtra("note_id",noteId), 4) }) { item ->
+        home = HomeScreen(this, recent, { pickDocument() }, { noteId -> startActivityForResult(Intent(this, PdfNotesActivity::class.java).putExtra("note_id",noteId), 4) }, { id -> startActivityForResult(Intent(this, ImportedDocumentManageActivity::class.java).putExtra("import_id",id),4) }) { item ->
             openingRecent = true
             documentUri = item.uri
             incomingMimeType = null
@@ -452,6 +452,18 @@ class MainActivity : Activity() {
     @Deprecated("Android 파일 선택 결과 처리")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if(requestCode==42) {
+            val uri=if(resultCode==RESULT_OK)data?.data else null
+            if(uri!=null) {
+                documentUri?.let(recent::remove)
+                documentUri=uri
+                recent.add(uri,data?.getStringExtra("name") ?: selectedName)
+                incomingMimeType=null
+                autoOpenOffice=true
+                loadDocument()
+            }
+            return
+        }
         if (requestCode == 4) { home.refresh(); return }
         if (requestCode == 2 || requestCode == 3) {
             if (requestCode == 3 && data?.getBooleanExtra("password_cancelled", false) == true) {
@@ -461,7 +473,9 @@ class MainActivity : Activity() {
                 return
             }
             if (resultCode == RESULT_OK) data?.data?.let {
-                if(requestCode==3&&it.authority=="$packageName.pdfnotes")documentUri?.let(recent::remove)
+                if(requestCode==3&&it.authority in listOf("$packageName.pdfnotes","$packageName.imports")) {
+                    documentUri?.takeIf {previous->previous!=it}?.let(recent::remove)
+                }
                 recent.add(it, data.getStringExtra("name") ?: selectedName)
                 if (data.hasExtra("view_page")) recent.updateView(it, data.getIntExtra("view_page", 0),
                     data.getStringExtra("view_mode") ?: "", data.getFloatExtra("view_zoom", 1f),
@@ -543,6 +557,13 @@ class MainActivity : Activity() {
                             viewerControls.setTitle(name)
                             val saved = if (openingRecent) recent.all().firstOrNull { it.uri == uri } else null
                             val extension = name.substringAfterLast('.', "").lowercase()
+                            val hwpPreview=extension in listOf("hwp","hwpx") && uri.authority!="$packageName.imports"
+                            if(hwpPreview) {
+                                hwpViewing=PageViewing(scrolling=true)
+                                viewerControls.setPreview {
+                                    startDocumentImport(this,uri,name)
+                                }
+                            } else viewerControls.clearPreview()
                             val isOffice = extension in listOf("docx", "xlsx", "pptx")
                             if (extension == "csv" && launchOffice) {
                                 releaseBrowser()
@@ -677,7 +698,12 @@ class MainActivity : Activity() {
                         val engine=java.security.MessageDigest.getInstance("SHA-256")
                         assets.open("rhwp/rhwp_bg.wasm").use {input->val buffer=ByteArray(65536);while(true){val size=input.read(buffer);if(size<0)break;engine.update(buffer,0,size)}}
                         val profile="rhwp/${engine.digest().joinToString(""){"%02x".format(it)}}/AndroidSVG/1.4/AndroidPdf/${android.os.Build.VERSION.SDK_INT}"
-                        val note=PdfInkStore(java.io.File(filesDir,"pdf-notes")).createDocument(source,background,name,count,profile){generation!=loadGeneration||isDestroyed}
+                        val noteStore=PdfInkStore(java.io.File(filesDir,"pdf-notes"))
+                        val note=noteStore.createDocument(source,background,name,count,profile){generation!=loadGeneration||isDestroyed}
+                        if(originalUri.authority=="$packageName.imports") {
+                            try { ImportedDocumentStore(java.io.File(filesDir,"imported-documents")).attachNote(originalUri.lastPathSegment,note.id) }
+                            catch(error:Exception) { noteStore.delete(note.id);throw error }
+                        }
                         runOnUiThread {
                             if(generation==loadGeneration&&!isDestroyed){
                                 val uri=Uri.parse("content://$packageName.pdfnotes/${note.id}")

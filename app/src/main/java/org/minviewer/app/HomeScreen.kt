@@ -20,6 +20,7 @@ class HomeScreen(
     private val recent: RecentDocuments,
     private val openPicker: () -> Unit,
     private val openDocumentActions: (String?) -> Unit,
+    private val openImportedActions: (String) -> Unit,
     private val openRecent: (RecentDocument) -> Unit
 ) : FrameLayout(activity) {
     private val ui = UiStyle(activity)
@@ -27,6 +28,7 @@ class HomeScreen(
     private val store = PdfInkStore(File(activity.filesDir,"pdf-notes"))
     private val notice = ui.label("",12f,color=ui.muted)
     private var notes = emptyList<PdfNoteEntry>()
+    private var imported = emptyList<ImportedDocumentStore.Entry>()
     private var refreshGeneration = 0
 
     init {
@@ -49,8 +51,13 @@ class HomeScreen(
         showDocuments()
         PdfInkStore.io.execute {
             try {
+                val cleanupError=try {WordSnapshot.cleanup(activity.cacheDir);null}
+                    catch(error:java.io.IOException) {"임시 문서 정리 오류: ${error.message}"}
                 val loaded=store.all()
-                activity.runOnUiThread { if(!activity.isDestroyed&&generation==refreshGeneration){notes=loaded;notice.visibility=View.GONE;showDocuments()} }
+                val imports=ImportedDocumentStore(File(activity.filesDir,"imported-documents"))
+                imports.cleanupAbandoned()
+                val saved=imports.all()
+                activity.runOnUiThread { if(!activity.isDestroyed&&generation==refreshGeneration){notes=loaded;imported=saved;notice.visibility=if(cleanupError==null)View.GONE else View.VISIBLE;notice.text=cleanupError.orEmpty();showDocuments()} }
             } catch(error:java.io.IOException){
                 activity.runOnUiThread {if(!activity.isDestroyed&&generation==refreshGeneration){notice.visibility=View.VISIBLE;notice.text="보관된 문서 오류: ${error.message}"}}
             }
@@ -60,19 +67,30 @@ class HomeScreen(
     private fun showDocuments() {
         val history=recent.all()
         val noteUris=notes.associateBy { Uri.parse("content://${activity.packageName}.pdfnotes/${it.id}") }
-        val stored=notes.map { entry ->
+        val linkedNoteIds=imported.mapNotNull {it.noteId}.toSet()
+        val importedItems=imported.map {entry ->
+            val uri=Uri.parse(if(entry.noteId==null)"content://${activity.packageName}.imports/${entry.id}" else "content://${activity.packageName}.pdfnotes/${entry.noteId}")
+            val saved=history.firstOrNull {it.uri==uri}
+            val modified=File(activity.filesDir,"imported-documents/${entry.id}/source").lastModified()
+            (saved ?: RecentDocument(uri,entry.name,modified)).copy(name=entry.name)
+        }
+        val importedUris=importedItems.map {it.uri}.toSet()
+        val importedByUri=imported.associateBy {entry -> Uri.parse(if(entry.noteId==null)"content://${activity.packageName}.imports/${entry.id}" else "content://${activity.packageName}.pdfnotes/${entry.noteId}")}
+        val stored=notes.filterNot {it.id in linkedNoteIds}.map { entry ->
             val uri=Uri.parse("content://${activity.packageName}.pdfnotes/${entry.id}")
             history.firstOrNull { it.uri==uri }?.copy(name=entry.name) ?: RecentDocument(uri,entry.name,entry.modifiedAt)
         }
-        library.setDocuments((stored+history.filter {it.uri !in noteUris}).sortedByDescending {it.openedAt}.map { item ->
+        library.setDocuments((stored+importedItems+history.filter {it.uri !in noteUris && it.uri !in importedUris}).sortedByDescending {it.openedAt}.map { item ->
             val date = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(item.openedAt))
             val note=noteUris[item.uri]
+            val importedEntry=importedByUri[item.uri]
             val noteId=item.uri.takeIf{it.authority=="${activity.packageName}.pdfnotes"}?.lastPathSegment
             val name=item.name.removePrefix("[필기] ")
             LibraryDocument(item.uri, name, note?.error?:date, { openRecent(item.copy(name=name)) }, {
-                if(noteId!=null)openDocumentActions(noteId)
+                if(importedEntry!=null)openImportedActions(importedEntry.id)
+                else if(noteId!=null)openDocumentActions(noteId)
                 else ui.confirmDelete("최근 문서 목록에서 삭제할까요? 원본 파일은 삭제되지 않습니다.") { recent.remove(item.uri); refresh() }
-            }, if(noteId!=null)"$name 관리"else"$name 목록에서 삭제")
+            }, if(noteId!=null || importedEntry!=null)"$name 관리"else"$name 목록에서 삭제")
         })
     }
 

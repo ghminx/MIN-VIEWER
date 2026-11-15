@@ -51,6 +51,8 @@ class ViewerControls(
     private val progress=ProgressBar(activity).apply {visibility=View.GONE;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
     private val noticeAction=ui.button("문서 닫기"){onBack()}.apply {visibility=View.GONE}
     private var documentNotice = ""
+    private var previewOnly = false
+    private val hiddenPreviewActions = mutableListOf<View>()
     private var readingAction: TextView? = null
     private var inkToolsAction: TextView? = null
     private val searchBar = LinearLayout(activity).apply {orientation=VERTICAL;visibility=View.GONE;setBackgroundColor(ui.surface)}
@@ -156,7 +158,36 @@ class ViewerControls(
 
     fun setTitle(title:String) {titleView.text=title}
 
+    fun addImportAction(add:()->Unit) {
+        top.addView(ui.button("문서에 추가", color=Color.WHITE) {add()}.apply {
+            minHeight=ui.dp(48);setPadding(ui.dp(8),0,ui.dp(8),0)
+        },2)
+    }
+
+    fun setPreview(add:()->Unit) {
+        if(previewOnly)return
+        previewOnly=true
+        closeSearch()
+        while(top.childCount>2) {
+            val view=top.getChildAt(2)
+            top.removeViewAt(2)
+            hiddenPreviewActions.add(view)
+        }
+        top.addView(ui.button("문서에 추가", color=Color.WHITE) {add()}.apply {
+            minHeight=ui.dp(48);setPadding(ui.dp(12),0,ui.dp(12),0)
+        })
+    }
+
+    fun clearPreview() {
+        if(!previewOnly)return
+        top.removeViewAt(2)
+        hiddenPreviewActions.forEach(top::addView)
+        hiddenPreviewActions.clear()
+        previewOnly=false
+    }
+
     fun setReadingAction(editing:Boolean,enabled:Boolean,toggle:()->Unit) {
+        if(previewOnly)return
         val button=readingAction?:action("읽기",toggle).apply {
             setSingleLine();setPadding(ui.dp(12),0,ui.dp(12),0)
         }.also {top.addView(it,2,LayoutParams(ui.dp(48),ui.dp(48)));readingAction=it}
@@ -169,6 +200,7 @@ class ViewerControls(
     fun setDocumentNotice(message:String) {documentNotice=message;notice.text=message;notice.setTextColor(ui.text);noticeArea.visibility=if(message.isEmpty())View.GONE else View.VISIBLE;progress.visibility=View.GONE;noticeAction.visibility=View.GONE}
 
     fun setInkToolsAction(visible:Boolean,collapsed:Boolean,toggle:()->Unit) {
+        if(previewOnly)return
         if(!visible&&inkToolsAction==null)return
         val button=inkToolsAction?:action("펜",toggle).also {top.addView(it,top.indexOfChild(listButton));inkToolsAction=it}
         button.visibility=if(visible)VISIBLE else GONE

@@ -22,8 +22,16 @@ export function createDevice({serial,physical=false,dumpPath='/sdcard/min-test.x
         encoding:'utf8',timeout:60000,maxBuffer:8*1024*1024,
     });
     const screen=()=>{
-        assert.match(run('shell','uiautomator','dump',dumpPath),/dumped to/,'새 화면 덤프 성공 필요');
-        return run('shell','cat',dumpPath);
+        let output;
+        try {output=run('shell','uiautomator','dump',dumpPath);}
+        catch(error) {
+            if(error.status!==137 || !String(error.stdout).includes('UI hierchary dumped to:'))throw error;
+            output=String(error.stdout);
+        }
+        assert.match(output,/dumped to/,'새 화면 덤프 성공 필요');
+        const xml=run('shell','cat',dumpPath);
+        assert.ok(xml.trim().endsWith('</hierarchy>') || xml.trim().endsWith('/>'),'화면 정보가 불완전합니다');
+        return xml;
     };
     const wait=async pattern=>{
         for(let i=0;i<attempts;i++) {

@@ -49,6 +49,19 @@ class PdfInkStore(private val root: File) {
 
     fun original(id: String) = File(directory(id), "original.pdf")
 
+    fun matchingSources(sha256: String, bytes: Long, canceled: () -> Boolean): List<PdfNoteEntry> = synchronized(storageLock) {
+        all().filter { entry ->
+            if (canceled()) throw InterruptedIOException("작업을 취소했습니다.")
+            if (entry.error != null) return@filter false
+            val dir=directory(entry.id)
+            val possible=listOf("source.pptx","source.docx","source.hwp","source.hwpx")
+                .map {File(dir,it)}.firstOrNull(File::isFile) ?: original(entry.id)
+            if(possible.length()!=bytes) return@filter false
+            if(possible.name!="original.pdf") sourceMetadata(dir,canceled)
+            hash(possible,canceled)==sha256
+        }
+    }
+
     fun createDocument(source: File, snapshot: File, name: String, pages: Int, engineBuild: String, canceled: () -> Boolean): PdfInkNote = synchronized(storageLock) {
         val format=name.substringAfterLast('.').lowercase()
         require(format in listOf("pptx","docx","hwp","hwpx") && source.length() in 1..PDF_LIMIT) { "지원하지 않는 원본 사본 또는 크기입니다." }
