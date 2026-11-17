@@ -21,8 +21,8 @@ android {
         applicationId = "org.minviewer.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.1.3"
+        versionCode = 13
+        versionName = "1.1.4"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
