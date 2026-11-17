@@ -74,6 +74,7 @@ class MainActivity : Activity() {
     private var swipeDocument = false
     private var swipeMultiTouch = false
     private var hwpDragging = false
+    private var hwpTextSelecting = false
     private var hwpVelocity: android.view.VelocityTracker? = null
     private var panelGeneration = 0
     private var panelChanging = false
@@ -337,6 +338,7 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (hwpTextSelecting) return super.dispatchTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 swipeX = event.rawX
@@ -782,6 +784,24 @@ class MainActivity : Activity() {
     }
 
     inner class EngineBridge(private val generation: Int) {
+        @JavascriptInterface fun onTextSelectionActive(active: Boolean, documentGeneration: Int) = runOnUiThread {
+            if (generation != browserGeneration || documentGeneration != loadGeneration || isDestroyed || isFinishing) return@runOnUiThread
+            hwpTextSelecting = active
+            browser?.parent?.requestDisallowInterceptTouchEvent(active)
+            if (active) {
+                val cancel = MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+                tapDetector.onTouchEvent(cancel)
+                cancel.recycle()
+            }
+        }
+
+        @JavascriptInterface fun copySelectedText(text: String, documentGeneration: Int) = runOnUiThread {
+            if (generation != browserGeneration || documentGeneration != loadGeneration || isDestroyed || isFinishing || text.isEmpty()) return@runOnUiThread
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("문서 텍스트", text))
+            Toast.makeText(this@MainActivity, "복사했습니다", Toast.LENGTH_SHORT).show()
+        }
+
         @JavascriptInterface fun onReady() = runOnUiThread {
             if (generation == browserGeneration && !isDestroyed && !isFinishing) {
                 ready = true

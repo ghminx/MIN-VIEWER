@@ -28,7 +28,7 @@ function setup({ failPageCount = false, pendingFetch = false, pendingBody = fals
         createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 1 }) }) }),
     };
     const context = vm.createContext({
-        window, document, Uint8Array, AbortController, crypto: webcrypto,
+        window, document, Uint8Array, AbortController, crypto: webcrypto, setTimeout, clearTimeout,
         fetch: async (url, options) => {
             fetchedUrls.push(url);
             if (pendingFetch && url === '/pending') {

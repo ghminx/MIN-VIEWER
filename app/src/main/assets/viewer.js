@@ -1,5 +1,6 @@
 import initRhwp, { HwpDocument } from './rhwp/rhwp.js';
 import { substituteEquationGlyphs } from './equation-glyphs.mjs';
+import { selectHwpText, hwpWordAt } from './hwp-text-selection.mjs';
 
 const status = document.querySelector('#status');
 const page = document.querySelector('#page');
@@ -29,6 +30,123 @@ let hwpViewportSnapshot = [];
 let hwpDragOffset = 0;
 let hwpMotionGeneration = 0;
 let hwpAnimations = [];
+let textSelectionTimer;
+let textSelection;
+
+function clearTextSelection() {
+    clearTimeout(textSelectionTimer);
+    textSelectionTimer = undefined;
+    textSelection?.layer.remove();
+    textSelection = undefined;
+    window.Android.onTextSelectionActive?.(false, activeGeneration);
+}
+
+function selectionPoint(slot, x, y) {
+    const bounds = slot.getBoundingClientRect();
+    return { x: (x - bounds.left) * Number(slot.dataset.width) / bounds.width,
+        y: (y - bounds.top) * Number(slot.dataset.height) / bounds.height };
+}
+
+function attachTextSelection(slot) {
+    let down;
+    slot.addEventListener('pointerdown', event => {
+        if (event.pointerType !== 'touch' || !documentHandle) return;
+        if (textSelection?.slot === slot && event.target.closest?.('button')) return;
+        clearTextSelection();
+        down = { x: event.clientX, y: event.clientY, pointer: event.pointerId };
+        textSelectionTimer = setTimeout(() => {
+            if (!down || !documentHandle) return;
+            const word=hwpWordAt(documentHandle,Number(slot.dataset.page),selectionPoint(slot,down.x,down.y),6*Number(slot.dataset.width)/slot.clientWidth);
+            if(!word)return;
+            const layer = document.createElement('div');
+            Object.assign(layer.style, {position:'absolute', inset:'0', pointerEvents:'none'});
+            slot.appendChild(layer);
+            textSelection = { slot, layer, start: word.start, end:word.end, pointer: down.pointer };
+            updateTextSelection();
+            window.Android.onTextSelectionActive(true, activeGeneration);
+        }, 500);
+    });
+    slot.addEventListener('pointermove', event => {
+        if (!down || event.pointerId !== down.pointer) return;
+        if (!textSelection && Math.hypot(event.clientX-down.x, event.clientY-down.y) > 10) clearTimeout(textSelectionTimer);
+        if (!textSelection || textSelection.pointer !== event.pointerId) return;
+        event.preventDefault();
+        if(Math.hypot(event.clientX-down.x,event.clientY-down.y)<8)return;
+        textSelection.end=selectionPoint(slot,event.clientX,event.clientY);
+        updateTextSelection();
+    });
+    const finish = event => {
+        clearTimeout(textSelectionTimer);
+        down = undefined;
+        if (!textSelection || event.pointerId !== textSelection.pointer) return;
+        window.Android.onTextSelectionActive(false, activeGeneration);
+        if (!textSelection.text) { clearTextSelection(); return; }
+        finishTextSelection();
+    };
+    slot.addEventListener('pointerup', finish);
+    slot.addEventListener('pointercancel', () => { down=undefined; clearTextSelection(); });
+}
+
+function updateTextSelection(preserveControls = false) {
+    const state=textSelection;
+    if(!state)return;
+    try {
+        const selected=selectHwpText(documentHandle,Number(state.slot.dataset.page),state.start,state.end);
+        state.text=selected.text;
+        state.rects=selected.rects.filter(r=>r.pageIndex===Number(state.slot.dataset.page));
+        if(preserveControls) {
+            for(const child of [...state.layer.children])if(child.tagName!=='BUTTON')child.remove();
+        } else state.layer.replaceChildren();
+        const width=Number(state.slot.dataset.width),height=Number(state.slot.dataset.height);
+        for(const r of state.rects) {
+            const mark=document.createElement('div');
+            Object.assign(mark.style,{position:'absolute',left:`${r.x/width*100}%`,top:`${r.y/height*100}%`,width:`${r.width/width*100}%`,height:`${r.height/height*100}%`,background:'rgba(38,132,255,.35)'});
+            state.layer.appendChild(mark);
+        }
+    } catch(error) {state.text='';state.layer.replaceChildren();status.textContent=error.message;}
+}
+
+function finishTextSelection() {
+    const state=textSelection;
+    if(!state?.text || !state.rects.length)return;
+    const width=Number(state.slot.dataset.width),height=Number(state.slot.dataset.height);
+    const first=state.rects[0],last=state.rects[state.rects.length-1];
+    for(const [key,rect,x] of [['start',first,first.x],['end',last,last.x+last.width]]) {
+        const handle=document.createElement('button');
+        handle.setAttribute('aria-label',key==='start'?'선택 시작 조절':'선택 끝 조절');
+        Object.assign(handle.style,{position:'absolute',left:`${x/width*100}%`,top:`${(rect.y+rect.height)/height*100}%`,width:'24px',height:'24px',border:'0',borderRadius:'50%',background:'#2684ff',pointerEvents:'auto',touchAction:'none',transform:key==='start'?'translateX(-100%)':'none'});
+        let dragging=false;
+        handle.addEventListener('pointerdown',event=>{
+            event.stopPropagation();event.preventDefault();dragging=true;
+            handle.setPointerCapture(event.pointerId);
+            state.menu.style.visibility='hidden';
+            window.Android.onTextSelectionActive(true,activeGeneration);
+        });
+        handle.addEventListener('pointermove',event=>{
+            if(!dragging)return;
+            event.stopPropagation();event.preventDefault();
+            state[key]=selectionPoint(state.slot,event.clientX,event.clientY-8);
+            // 캡처 중인 핸들을 유지하고 강조 영역만 갱신
+            updateTextSelection(true);
+        });
+        const finish=event=>{
+            if(!dragging)return;
+            dragging=false;event.stopPropagation();
+            window.Android.onTextSelectionActive(false,activeGeneration);
+            updateTextSelection();finishTextSelection();
+        };
+        handle.addEventListener('pointerup',finish);handle.addEventListener('pointercancel',finish);
+        state.layer.appendChild(handle);
+    }
+    const button=document.createElement('button');button.textContent='복사';state.menu=button;
+    const top=first.y/height*state.slot.clientHeight;
+    Object.assign(button.style,{position:'absolute',left:`${Math.min(80,Math.max(0,first.x/width*100))}%`,top:`${Math.max(0,top-44)}px`,pointerEvents:'auto',padding:'8px 16px',background:'#1b3153',color:'white',border:'0',borderRadius:'8px'});
+    button.addEventListener('click',()=>{
+        if(textSelection!==state)return;
+        window.Android.copySelectedText(state.text,activeGeneration);clearTextSelection();
+    });
+    state.layer.appendChild(button);
+}
 
 function cancelHwpAnimations() {
     hwpMotionGeneration++;
@@ -144,6 +262,7 @@ window.cancelHwpPageDrag = () => {
 };
 
 window.resetDocument = () => {
+    clearTextSelection();
     cancelHwpAnimations();hwpDragOffset=0;hwpViewportSnapshot=[];
     previewRequested = false;
     sequence++;
@@ -309,6 +428,7 @@ window.setHwpMode = (mode, index, cover = false, paged = mode === 'single') => {
             }
             slot.dataset.page = String(pageIndex);
             slot.dataset.width = String(info.width); slot.dataset.height = String(info.height);
+            attachTextSelection(slot);
             slot.dataset.row = String(mode === 'spread' ? (cover ? Math.floor((pageIndex + 1) / 2) : Math.floor(pageIndex / 2)) : pageIndex);
             page.appendChild(slot);
             return slot;

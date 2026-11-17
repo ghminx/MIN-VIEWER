@@ -72,6 +72,26 @@ class PdfActivity : Activity() {
     private var canSearchNext = false
     private var renderer: PdfRenderer? = null
     private var temporaryFile: File? = null
+    private var selectionPassword = ""
+    private val textSelection by lazy {
+        PdfTextSelection(this, { x, y -> imageAt(x, y) }, { image, event ->
+            inkPoint(image, event, 0)?.let { it.x to it.y }
+        }, { page, receive ->
+            worker.execute {
+                val result = runCatching {
+                    com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
+                    val cached = wordSnapshot?.let { File(it.directory, "background.pdf") } ?: temporaryFile
+                    val input = cached?.inputStream() ?: contentResolver.openInputStream(requireNotNull(intent.data))
+                        ?: throw IOException("파일을 읽을 수 없습니다.")
+                    input.use { PdfTextExtractor.read(it, page, selectionPassword) }
+                }
+                runOnUiThread { if (!closed) receive(result) }
+            }
+        }, {
+            val cancel = MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+            super.dispatchTouchEvent(cancel); tapDetector.onTouchEvent(cancel); cancel.recycle()
+        })
+    }
     private var pageCount = 0
     private var pageIndex = 0
     private var mode = 1
@@ -402,6 +422,7 @@ class PdfActivity : Activity() {
     }
 
     private fun beginInk() {
+        textSelection.clear()
         if (!openedSuccessfully || inkPreparing) return
         inkStatus.visibility = View.VISIBLE
         if (encryptedDocument) { inkStatus.text = "암호 PDF의 필기는 아직 지원하지 않습니다."; return }
@@ -727,6 +748,7 @@ class PdfActivity : Activity() {
             }
         }
         if(touchOnOverlay)return super.dispatchTouchEvent(event)
+        if (!isPptDocument && !inkEnabled && textSelection.touch(event)) return true
         if(handleLassoContext(event))return true
         if (handleInk(event)) return true
         if(pageTurnAnimator!=null)return true
@@ -1153,6 +1175,8 @@ class PdfActivity : Activity() {
     }
 
     private fun openDocument(uri: Uri, password: String?) {
+        selectionPassword = password.orEmpty()
+        textSelection.clear()
         worker.execute {
             try {
                 val restoredNote = if (uri.authority == "$packageName.pdfnotes") {
@@ -1290,6 +1314,7 @@ class PdfActivity : Activity() {
     }
 
     private fun showPage(index: Int) {
+        textSelection.clear()
         if (index !in 0 until pageCount) return
         pageTurnAnimator?.let {it.removeAllListeners();it.cancel();pageTurnAnimator=null;list.translationX=0f;pageTurnView?.let(contentRow::removeView);pageTurnView=null;pageTurnTarget=-1}
         clearInkSelection()
@@ -1388,6 +1413,7 @@ class PdfActivity : Activity() {
     }
 
     private fun changeViewing(value: PageViewing, persist: Boolean = true) {
+        textSelection.clear()
         val selected=pageIndex
         viewing=value
         if(persist) intent.data?.let {viewing.save(this,it)}
@@ -1887,6 +1913,7 @@ class PdfActivity : Activity() {
                     override fun onDraw(canvas: Canvas) {
                         super.onDraw(canvas)
                         drawInk(canvas, this, index, inkLayer)
+                        textSelection.draw(canvas, this)
                         val bitmap = drawable ?: return
                         if (index != highlightedPage) return
                         val area = RectF(0f, 0f, bitmap.intrinsicWidth.toFloat(), bitmap.intrinsicHeight.toFloat())
@@ -1968,6 +1995,7 @@ class PdfActivity : Activity() {
     }
 
     override fun onDestroy() {
+        textSelection.clear()
         closed = true
         lassoHold?.let(horizontal::removeCallbacks);inkContextMenu?.dismiss();inkClipboard=null
         pageTurnAnimator?.let {it.removeAllListeners();it.cancel()};pageVelocity?.recycle();pageVelocity=null
