@@ -25,6 +25,7 @@ internal class PdfTextSelection(
     private val load: (Int, (Result<TextSelectionPage>) -> Unit) -> Unit,
     private val cancelGesture: () -> Unit
 ) {
+    var onAi: ((String, Int, String) -> Unit)? = null
     private var image: ImageView? = null
     private var page: TextSelectionPage? = null
     private var start = -1
@@ -142,12 +143,27 @@ internal class PdfTextSelection(
         popup = target.startActionMode(object:ActionMode.Callback2() {
             override fun onCreateActionMode(mode:ActionMode,menu:Menu):Boolean {
                 menu.add(0,1,0,"복사").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                menu.add(0,2,1,"선택 해제")
+                menu.add(0,2,1,"모두 선택").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                if(onAi!=null) {
+                    menu.add(0,5,2,"요약").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                    menu.add(0,3,3,"설명").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                    menu.add(0,4,4,"번역").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                }
                 return true
             }
             override fun onPrepareActionMode(mode:ActionMode,menu:Menu)=false
             override fun onActionItemClicked(mode:ActionMode,item:MenuItem):Boolean {
                 val text = page?.select(start, end)?.text.orEmpty()
+                if(item.itemId==2) {
+                    start=0;end=page!!.glyphs.lastIndex;initialWord=null
+                    target.invalidate();mode.invalidateContentRect()
+                    return true
+                }
+                if(item.itemId in 3..5&&text.isNotEmpty()) {
+                    mode.finish()
+                    onAi?.invoke(text,target.getTag(R.id.pdf_page_index) as Int,when(item.itemId){4->"translate";5->"summary";else->"explain"})
+                    return true
+                }
                 if (item.itemId==1 && text.isNotEmpty()) {
                     (activity.getSystemService(Activity.CLIPBOARD_SERVICE) as ClipboardManager)
                         .setPrimaryClip(ClipData.newPlainText("문서 텍스트", text))
@@ -188,6 +204,7 @@ internal class PdfTextSelection(
 
     fun draw(canvas: Canvas, target: ImageView) {
         val value = page ?: return
+        if(target!==image&&target.getTag(R.id.pdf_page_index)==image?.getTag(R.id.pdf_page_index))image=target
         if (target !== image || start < 0 || end < 0) return
         val drawable = target.drawable ?: return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(100, 38, 132, 255) }

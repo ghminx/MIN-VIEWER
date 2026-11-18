@@ -73,20 +73,13 @@ class PdfActivity : Activity() {
     private var renderer: PdfRenderer? = null
     private var temporaryFile: File? = null
     private var selectionPassword = ""
+    private var documentAi: DocumentAi? = null
+    private var aiViewportChanging = false
     private val textSelection by lazy {
         PdfTextSelection(this, { x, y -> imageAt(x, y) }, { image, event ->
             inkPoint(image, event, 0)?.let { it.x to it.y }
         }, { page, receive ->
-            worker.execute {
-                val result = runCatching {
-                    com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
-                    val cached = wordSnapshot?.let { File(it.directory, "background.pdf") } ?: temporaryFile
-                    val input = cached?.inputStream() ?: contentResolver.openInputStream(requireNotNull(intent.data))
-                        ?: throw IOException("파일을 읽을 수 없습니다.")
-                    input.use { PdfTextExtractor.read(it, page, selectionPassword) }
-                }
-                runOnUiThread { if (!closed) receive(result) }
-            }
+            loadTextPage(page,receive)
         }, {
             val cancel = MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
             super.dispatchTouchEvent(cancel); tapDetector.onTouchEvent(cancel); cancel.recycle()
@@ -205,7 +198,7 @@ class PdfActivity : Activity() {
     private var inkDirty = false
     private data class InkSession(val note: PdfInkNote, val undo: List<List<InkStroke>>, val redo: List<List<InkStroke>>, val dirty: Boolean)
     private data class InkClipboard(val strokes:List<InkStroke>,val width:Int,val height:Int)
-    private data class ViewerSession(val ink: InkSession?, val wordSnapshot: WordSnapshot?,val clipboard:InkClipboard?)
+    private data class ViewerSession(val ink: InkSession?, val wordSnapshot: WordSnapshot?,val clipboard:InkClipboard?,val ai:Any?=null)
     private var retainedInkSession: InkSession? = null
     private var inkSelection: InkSelection? = null
     private var movingSelection = false
@@ -654,10 +647,33 @@ class PdfActivity : Activity() {
             })
             updateInkChrome()
             contentRow.addView(inkDock,android.widget.FrameLayout.LayoutParams(-1,-2,if(inkAtTop())android.view.Gravity.TOP else android.view.Gravity.BOTTOM))
-            addView(contentRow, LinearLayout.LayoutParams(-1, 0, 1f))
+            documentAi=DocumentAi(this@PdfActivity,controls,contentRow,{receive->
+                val selected=pageIndex
+                if(!openedSuccessfully)receive(Result.failure(IOException("문서를 먼저 열어 주세요.")))
+                else loadTextPage(selected) {value->receive(value.map {page->AiSource(selected,if(page.glyphs.isEmpty())""else page.select(0,page.glyphs.lastIndex).text)})}
+            },{page->showPage(page)},{
+                pageOverview?.dismiss();pageOverview=null
+                thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
+                thumbnailPanel?.let(contentRow::removeView);thumbnailPanel=null;thumbnailExpanded=false;layoutDocumentArea()
+            },(lastNonConfigurationInstance as? ViewerSession)?.ai,{aiViewportChanging=true})
+            if(DocumentAi.enabled&&!isPreview)textSelection.onAi={text,page,task->documentAi?.selected(text,page,task)}
+            addView(documentAi!!.view, LinearLayout.LayoutParams(-1, 0, 1f))
         })
         val uri = intent.data ?: run { status.text = "PDF 오류: 파일이 없습니다."; return }
         openDocument(uri, null)
+    }
+
+    private fun loadTextPage(page:Int,receive:(Result<TextSelectionPage>)->Unit) {
+        worker.execute {
+            val result=runCatching {
+                com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
+                val cached=wordSnapshot?.let {File(it.directory,"background.pdf")}?:temporaryFile
+                val input=cached?.inputStream()?:contentResolver.openInputStream(requireNotNull(intent.data))
+                    ?:throw IOException("파일을 읽을 수 없습니다.")
+                input.use {PdfTextExtractor.read(it,page,selectionPassword)}
+            }
+            runOnUiThread {if(!closed)receive(result)}
+        }
     }
 
     private fun inkAtTop()=resources.configuration.screenWidthDp>=600&&resources.configuration.screenHeightDp>=480
@@ -739,6 +755,7 @@ class PdfActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(documentAi?.ownsTouch(event)==true)return super.dispatchTouchEvent(event)
         if(presentationMode.isExitGesture(event))return super.dispatchTouchEvent(event)
         updateStylusEraser(event)
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {
@@ -1305,6 +1322,7 @@ class PdfActivity : Activity() {
 
     @Deprecated("Android 뒤로 이동 처리")
     override fun onBackPressed() {
+        if(documentAi?.hide()==true)return
         if(presentationMode.active)leavePresentation() else if(controls.searchIsOpen)controls.closeSearch()else super.onBackPressed()
     }
 
@@ -1578,11 +1596,12 @@ class PdfActivity : Activity() {
 
     private fun resizeDocument() {
         if(horizontal.width<=0||horizontal.height<=0)return
-        if(!documentLayoutPending&&documentAreaWidth>0&&(documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height)){
+        if(!documentLayoutPending&&!aiViewportChanging&&documentAreaWidth>0&&(documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height)){
             zoom=1f;pageOffsetX=0f;pageOffsetY=0f
             navigationGeneration++;scrollAnchorPage=pageIndex
         }
         val changed=documentAreaWidth!=horizontal.width||documentAreaHeight!=horizontal.height
+        aiViewportChanging=false
         documentAreaWidth=horizontal.width;documentAreaHeight=horizontal.height
         if(changed){
             val first=list.firstVisiblePosition;val top=list.getChildAt(0)?.top?:0
@@ -1849,6 +1868,7 @@ class PdfActivity : Activity() {
     }
 
     private fun showThumbnails() {
+        documentAi?.hide()
         if(pageCount==0||searching)return
         thumbnailPanel?.let {panel->
             thumbnailExpanded=!thumbnailExpanded
@@ -1972,7 +1992,7 @@ class PdfActivity : Activity() {
 
     @Deprecated("Android Activity의 구성 변경 상태 유지")
     override fun onRetainNonConfigurationInstance(): Any? =
-        ViewerSession(inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession, wordSnapshot,inkClipboard)
+        ViewerSession(inkNote?.let { InkSession(it, inkUndo.toList(), inkRedo.toList(), inkDirty) } ?: retainedInkSession, wordSnapshot,inkClipboard,documentAi?.retain())
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("inkToolsCollapsed",inkCollapsed)
@@ -1995,6 +2015,7 @@ class PdfActivity : Activity() {
     }
 
     override fun onDestroy() {
+        documentAi?.close(isChangingConfigurations)
         textSelection.clear()
         closed = true
         lassoHold?.let(horizontal::removeCallbacks);inkContextMenu?.dismiss();inkClipboard=null

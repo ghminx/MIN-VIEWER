@@ -158,6 +158,11 @@ class ViewerControls(
 
     fun setTitle(title:String) {titleView.text=title}
 
+    fun addAiAction(open:()->Unit):TextView? {
+        if(previewOnly)return null
+        return action("AI 도우미",open).also {top.addView(it,maxOf(2,top.childCount-1))}
+    }
+
     fun addImportAction(add:()->Unit) {
         top.addView(ui.button("문서에 추가", color=Color.WHITE) {add()}.apply {
             minHeight=ui.dp(48);setPadding(ui.dp(8),0,ui.dp(8),0)

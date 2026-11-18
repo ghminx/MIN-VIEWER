@@ -1,3 +1,10 @@
+export function selectAllHwpText(document, page) {
+    const {runs}=JSON.parse(document.getPageTextLayout(page));
+    return {text:document.getPageText(page),rects:runs.filter(r=>r.text.trim()).map(r=>({
+        pageIndex:page,x:r.x,y:r.y,width:r.w,height:r.h,
+    }))};
+}
+
 export function hwpWordAt(document, page, point, padding = 0) {
     const {runs}=JSON.parse(document.getPageTextLayout(page));
     const distance=r=>Math.max(r.x-point.x,0,point.x-r.x-r.w)**2+Math.max(r.y-point.y,0,point.y-r.y-r.h)**2;

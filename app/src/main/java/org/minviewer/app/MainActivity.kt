@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private var hwpCanSearch = false
     private var hwpCanNext = false
     private lateinit var viewerControls: ViewerControls
+    private var documentAi: DocumentAi? = null
     private var documentUri: Uri? = null
     private var pageCount = 0
     private var pageIndex = 0
@@ -122,6 +123,7 @@ class MainActivity : Activity() {
     }
 
     private fun receiveDocument(incoming: Intent) {
+        documentAi?.reset()
         viewerControls.closeSearch()
         val uri = when (incoming.action) {
             Intent.ACTION_VIEW -> incoming.data
@@ -167,7 +169,7 @@ class MainActivity : Activity() {
             insets
         }
         viewerControls = ViewerControls(this, "문서", { showHome() }, { if (hwpCanSearch) searchHwp() },
-            { listVisible = !listVisible; updateLayout() },
+            { documentAi?.hide();listVisible = !listVisible; updateLayout() },
             listOf("한쪽 보기" to { changeHwpMode("single") }, "두쪽 보기" to { changeHwpMode("spread") },
                 "페이지 넘김" to { changeHwpViewing(hwpViewing.copy(scrolling=false)) }, "세로 스크롤" to { changeHwpViewing(hwpViewing.copy(scrolling=true)) }, "첫 페이지를 표지로 보기" to { changeHwpViewing(hwpViewing.copy(cover=!hwpViewing.cover)) },
                 "다음 검색 결과" to { nextHwpSearchResult() },
@@ -186,11 +188,24 @@ class MainActivity : Activity() {
             }
         }
         listPanel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;visibility=View.GONE;setBackgroundColor(UiStyle(this@MainActivity).background);addView(list,LinearLayout.LayoutParams(-1,0,1f))}
-        viewerControls.setListNavigation {listVisible=true;updateLayout()}
+        viewerControls.setListNavigation {documentAi?.hide();listVisible=true;updateLayout()}
         content.addView(listPanel)
         emptyMessage = TextView(this).apply { text = "파일을 선택해 주세요."; setPadding(24, 24, 24, 24) }
         content.addView(emptyMessage, FrameLayout.LayoutParams(-1, -1))
-        container.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+        documentAi=DocumentAi(this,viewerControls,content,{receive->
+            val view=browser
+            val generation=loadGeneration
+            val index=pageIndex
+            if(view==null||pageCount==0)receive(Result.failure(java.io.IOException("문서를 먼저 열어 주세요.")))
+            else view.evaluateJavascript("window.readAiPage($index)") {value->
+                if(generation==loadGeneration&&!isDestroyed&&!isFinishing)receive(runCatching {
+                    val source=JSONObject(value)
+                    if(source.has("error"))throw java.io.IOException(source.getString("error"))
+                    AiSource(source.getInt("page"),source.getString("text"))
+                })
+            }
+        },{page->showPage(page)},{listVisible=false;listPanel.visibility=View.GONE;updateLayout()},lastNonConfigurationInstance)
+        container.addView(documentAi!!.view, LinearLayout.LayoutParams(-1, 0, 1f))
         home = HomeScreen(this, recent, { pickDocument() }, { noteId -> startActivityForResult(Intent(this, PdfNotesActivity::class.java).putExtra("note_id",noteId), 4) }, { id -> startActivityForResult(Intent(this, ImportedDocumentManageActivity::class.java).putExtra("import_id",id),4) }) { item ->
             openingRecent = true
             documentUri = item.uri
@@ -234,6 +249,7 @@ class MainActivity : Activity() {
     }
 
     private fun showHome() {
+        documentAi?.reset()
         hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute{it.directory.deleteRecursively()}};hwpInkSnapshot=null
         hwpInkPreparing=false
         viewerControls.closeSearch()
@@ -250,6 +266,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Android 뒤로 이동 처리")
     override fun onBackPressed() {
+        if(documentAi?.hide()==true)return
         if(home.visibility!=View.VISIBLE&&viewerControls.searchIsOpen)viewerControls.closeSearch()
         else if (home.visibility == View.VISIBLE) super.onBackPressed() else showHome()
     }
@@ -338,6 +355,7 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(documentAi?.ownsTouch(event)==true)return super.dispatchTouchEvent(event)
         if (hwpTextSelecting) return super.dispatchTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -784,6 +802,11 @@ class MainActivity : Activity() {
     }
 
     inner class EngineBridge(private val generation: Int) {
+        @JavascriptInterface fun aiSelection(text:String,page:Int,task:String,documentGeneration:Int)=runOnUiThread {
+            if(!DocumentAi.enabled||generation!=browserGeneration||documentGeneration!=loadGeneration||isDestroyed||isFinishing)return@runOnUiThread
+            if(page !in 0 until pageCount||text.isBlank()||task !in listOf("summary","explain","translate"))return@runOnUiThread
+            documentAi?.selected(text,page,task)
+        }
         @JavascriptInterface fun onTextSelectionActive(active: Boolean, documentGeneration: Int) = runOnUiThread {
             if (generation != browserGeneration || documentGeneration != loadGeneration || isDestroyed || isFinishing) return@runOnUiThread
             hwpTextSelecting = active
@@ -804,6 +827,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface fun onReady() = runOnUiThread {
             if (generation == browserGeneration && !isDestroyed && !isFinishing) {
+                if(DocumentAi.enabled)browser?.evaluateJavascript("window.documentAiEnabled=true",null)
                 ready = true
                 if (pendingWebDocument) loadDocument()
             }
@@ -926,7 +950,11 @@ class MainActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
+    @Deprecated("Android 구성 변경 중 AI 세션 유지")
+    override fun onRetainNonConfigurationInstance():Any? = documentAi?.retain()
+
     override fun onDestroy() {
+        documentAi?.close(isChangingConfigurations)
         hwpInkSnapshot?.let {it.close();PdfInkStore.io.execute{it.directory.deleteRecursively()}};hwpInkSnapshot=null
         loadGeneration++
         documentSource = null

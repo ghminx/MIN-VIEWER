@@ -1,6 +1,6 @@
 import initRhwp, { HwpDocument } from './rhwp/rhwp.js';
 import { substituteEquationGlyphs } from './equation-glyphs.mjs';
-import { selectHwpText, hwpWordAt } from './hwp-text-selection.mjs';
+import { selectHwpText, hwpWordAt, selectAllHwpText } from './hwp-text-selection.mjs';
 
 const status = document.querySelector('#status');
 const page = document.querySelector('#page');
@@ -32,6 +32,13 @@ let hwpMotionGeneration = 0;
 let hwpAnimations = [];
 let textSelectionTimer;
 let textSelection;
+
+window.readAiPage = index => {
+    try {
+        if (!documentHandle) throw Error('문서를 먼저 열어 주세요.');
+        return {page:index,text:documentHandle.getPageText(index)};
+    } catch (error) { return {error:error.message}; }
+};
 
 function clearTextSelection() {
     clearTimeout(textSelectionTimer);
@@ -91,11 +98,12 @@ function updateTextSelection(preserveControls = false) {
     const state=textSelection;
     if(!state)return;
     try {
-        const selected=selectHwpText(documentHandle,Number(state.slot.dataset.page),state.start,state.end);
+        const selected=state.all?selectAllHwpText(documentHandle,Number(state.slot.dataset.page)):
+            selectHwpText(documentHandle,Number(state.slot.dataset.page),state.start,state.end);
         state.text=selected.text;
         state.rects=selected.rects.filter(r=>r.pageIndex===Number(state.slot.dataset.page));
         if(preserveControls) {
-            for(const child of [...state.layer.children])if(child.tagName!=='BUTTON')child.remove();
+            for(const child of [...state.layer.children])if(child.tagName!=='BUTTON'&&child!==state.menu)child.remove();
         } else state.layer.replaceChildren();
         const width=Number(state.slot.dataset.width),height=Number(state.slot.dataset.height);
         for(const r of state.rects) {
@@ -125,7 +133,7 @@ function finishTextSelection() {
         handle.addEventListener('pointermove',event=>{
             if(!dragging)return;
             event.stopPropagation();event.preventDefault();
-            state[key]=selectionPoint(state.slot,event.clientX,event.clientY-8);
+            state.all=false;state[key]=selectionPoint(state.slot,event.clientX,event.clientY-8);
             // 캡처 중인 핸들을 유지하고 강조 영역만 갱신
             updateTextSelection(true);
         });
@@ -145,7 +153,37 @@ function finishTextSelection() {
         if(textSelection!==state)return;
         window.Android.copySelectedText(state.text,activeGeneration);clearTextSelection();
     });
-    state.layer.appendChild(button);
+    {
+        const menu=document.createElement('div');
+        Object.assign(menu.style,button.style,{display:'flex',padding:'0',minHeight:'48px',maxWidth:'100%'});
+        state.menu=menu;
+        Object.assign(button.style,{position:'static',minHeight:'48px'});menu.appendChild(button);
+        const all=document.createElement('button');all.textContent='모두 선택';
+        Object.assign(all.style,{minWidth:'72px',minHeight:'48px',border:'0',padding:'8px',background:'#1b3153',color:'white',pointerEvents:'auto'});
+        all.addEventListener('click',()=>{
+            if(textSelection!==state)return;
+            state.all=true;updateTextSelection();
+            const first=state.rects[0],last=state.rects[state.rects.length-1];
+            if(!first||!last)return;
+            state.start={x:first.x+.01,y:first.y+first.height/2};state.end={x:last.x+last.width-.01,y:last.y+last.height/2};
+            finishTextSelection();
+        });
+        menu.appendChild(all);
+        for(const [label,task] of window.documentAiEnabled?[['요약','summary'],['설명','explain'],['번역','translate']]:[]) {
+            const action=document.createElement('button');action.textContent=label;
+            Object.assign(action.style,{minWidth:'48px',minHeight:'48px',border:'0',padding:'8px',background:'#1b3153',color:'white',pointerEvents:'auto'});
+            action.addEventListener('click',()=>{
+                if(textSelection!==state)return;
+                window.Android.aiSelection(state.text,Number(state.slot.dataset.page),task,activeGeneration);
+                state.menu.style.visibility='hidden';
+            });
+            menu.appendChild(action);
+        }
+        state.layer.appendChild(menu);
+        requestAnimationFrame(()=>{
+            if(textSelection===state)menu.style.left=`${Math.max(0,Math.min(first.x/width*state.slot.clientWidth,state.slot.clientWidth-menu.offsetWidth))}px`;
+        });
+    }
 }
 
 function cancelHwpAnimations() {

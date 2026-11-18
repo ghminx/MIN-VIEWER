@@ -24,16 +24,34 @@ android {
         versionCode = 13
         versionName = "1.1.4"
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        release { isMinifyEnabled = false }
+        create("aiTrial") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".aitrial"
+            matchingFallbacks += "debug"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    sourceSets["debug"].java.srcDir("src/noAi/java")
+    sourceSets["release"].java.srcDir("src/noAi/java")
+    sourceSets["aiTrial"].java.srcDir("src/debug/java")
+    sourceSets["aiTrial"].manifest.srcFile("src/aiTrial/AndroidManifest.xml")
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/engine-assets"))
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/lok-assets"))
     sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("generated/lok-jni"))
     packaging { jniLibs { useLegacyPackaging = true } }
+}
+
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+dependencies {
+    add("aiTrialImplementation", "com.google.mlkit:genai-prompt:1.0.0-beta4")
+    // Prompt beta4의 다운로드 완료·취소 시 Job ABI 오류에 대한 공식 우회 버전.
+    add("aiTrialImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 }
 
 val rhwpDirectory = rootProject.file(".research/rhwp-patched")

@@ -1,5 +1,6 @@
 .research/
 .gradle/
+.kotlin/
 local.properties
 app/build/
 tests/external-sender/**/build/

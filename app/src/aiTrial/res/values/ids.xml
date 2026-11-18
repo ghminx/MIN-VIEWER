@@ -1,0 +1,4 @@
+<resources>
+    <item name="ai_result" type="id" />
+    <item name="ai_source" type="id" />
+</resources>

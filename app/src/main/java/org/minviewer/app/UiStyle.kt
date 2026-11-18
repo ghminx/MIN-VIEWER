@@ -140,6 +140,7 @@ internal object UiIcon {
         fun line(x: Float, y: Float, xx: Float, yy: Float) = canvas.drawLine(x, y, xx, yy, paint)
         fun path(vararg points: Float) { val p = Path(); p.moveTo(points[0], points[1]); for (i in 2 until points.size step 2) p.lineTo(points[i], points[i + 1]); canvas.drawPath(p, paint) }
         when (kind) {
+            "AI 도우미" -> {path(13f,3f,15.5f,9.5f,22f,12f,15.5f,14.5f,13f,21f,10.5f,14.5f,4f,12f,10.5f,9.5f,13f,3f);path(4f,2f,5f,4f,7f,5f,5f,6f,4f,8f,3f,6f,1f,5f,3f,4f,4f,2f)}
             "읽기" -> {path(12f,5f,12f,21f);val p=Path();p.moveTo(12f,5f);p.quadTo(7f,2f,2f,4f);p.lineTo(2f,19f);p.quadTo(7f,17f,12f,21f);p.quadTo(17f,17f,22f,19f);p.lineTo(22f,4f);p.quadTo(17f,2f,12f,5f);canvas.drawPath(p,paint)}
             "펜" -> { path(7f,3f,17f,3f,17f,15f,12f,22f,7f,15f,7f,3f); line(7f,15f,17f,15f); line(12f,16f,12f,20f) }
             "형광펜" -> { path(7f,2f,17f,2f,17f,15f,14f,19f,9f,19f,6f,15f,7f,2f); line(7f,8f,17f,8f); path(9f,19f,9f,22f,14f,22f,14f,19f) }

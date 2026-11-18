@@ -26,10 +26,12 @@ while toolbar:
     if len(component) > len(largest):
         largest = component
 copy = None
+toolbar_bounds = None
 if len(largest) > 1000:
     left = min(p[0] for p in largest)
     right = max(p[0] for p in largest)
     top = min(p[1] for p in largest)
     bottom = max(p[1] for p in largest)
     copy = [round(left + (right-left)*.22), round((top+bottom)/2)]
-print(json.dumps({'handlePixels': handles, 'copy': copy}))
+    toolbar_bounds = [left, top, right, bottom]
+print(json.dumps({'handlePixels': handles, 'copy': copy, 'toolbar': toolbar_bounds}))
