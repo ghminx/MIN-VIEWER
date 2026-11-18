@@ -648,9 +648,11 @@ class PdfActivity : Activity() {
             updateInkChrome()
             contentRow.addView(inkDock,android.widget.FrameLayout.LayoutParams(-1,-2,if(inkAtTop())android.view.Gravity.TOP else android.view.Gravity.BOTTOM))
             documentAi=DocumentAi(this@PdfActivity,controls,contentRow,{receive->
-                val selected=pageIndex
                 if(!openedSuccessfully)receive(Result.failure(IOException("문서를 먼저 열어 주세요.")))
-                else loadTextPage(selected) {value->receive(value.map {page->AiSource(selected,if(page.glyphs.isEmpty())""else page.select(0,page.glyphs.lastIndex).text)})}
+                else {
+                    val selected=pageIndex.coerceIn(0,pageCount-1)
+                    loadTextPage(selected) {value->receive(value.map {page->AiSource(selected,if(page.glyphs.isEmpty())""else page.select(0,page.glyphs.lastIndex).text)})}
+                }
             },{page->showPage(page)},{
                 pageOverview?.dismiss();pageOverview=null
                 thumbnailAnimator?.let {it.removeAllListeners();it.cancel()}
@@ -1235,6 +1237,7 @@ class PdfActivity : Activity() {
                     if (!closed) {
                         setResult(RESULT_OK, android.content.Intent().setData(uri).putExtra("name", intent.getStringExtra("name")))
                         openedSuccessfully = true
+                        documentAi?.documentReady()
                         inkNote = restoredNote
                         if (restoredNote != null) {
                             val retained = retainedInkSession
@@ -1820,6 +1823,8 @@ class PdfActivity : Activity() {
                     setPadding(ui.dp(4),ui.dp(4),ui.dp(4),0)
                     background=ui.rounded(if(page==pageIndex)ui.selected else ui.background,6,if(page==pageIndex)ui.text else ui.line)
                 }
+                // 네이티브 Activity에서 문서와 필기를 직접 그리는 이미지.
+                @android.annotation.SuppressLint("AppCompatCustomView")
                 val image = object : ImageView(this@PdfActivity) {
                     override fun onDraw(canvas: Canvas) { super.onDraw(canvas);drawInk(canvas,this,page) }
                 }.apply { tag=page;scaleType=ImageView.ScaleType.FIT_CENTER;setImageBitmap(thumbnails.get(page));importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -1923,6 +1928,8 @@ class PdfActivity : Activity() {
                 val renderWidth = (((((width * if (!viewing.scrolling) zoom else 1f).toInt()) + 127) / 128) * 128).coerceAtMost(2560)
                 val key = "$index:$renderWidth"
                 val generation = renderGeneration
+                // 네이티브 Activity에서 문서와 필기를 직접 그리는 이미지.
+                @android.annotation.SuppressLint("AppCompatCustomView")
                 val image = object : ImageView(this@PdfActivity) {
                     private val inkLayer = InkLayer()
                     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {

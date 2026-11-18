@@ -32,7 +32,8 @@ try{
   await page.getByRole('button',{name:'AI 패널 닫기',exact:true}).click();
   assert.equal(await page.locator('.panel').count(),0);
   await page.getByRole('button',{name:'AI 도우미',exact:true}).click();
-  await page.getByRole('tab',{name:'요약',exact:true}).click();
+  const summary=page.getByRole('tab',{name:'요약',exact:true});
+  if(await summary.isVisible())await summary.click();else await page.getByRole('combobox',{name:'AI 작업 선택',exact:true}).selectOption('summary');
   await page.getByRole('button',{name:'요약하기',exact:true}).click();
   await page.getByRole('button',{name:'요청 취소',exact:true}).click();
   assert.equal(await page.locator('.loader').count(),0);

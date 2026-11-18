@@ -16,5 +16,6 @@ class DocumentAi(activity: Activity, controls: ViewerControls, document: View,
     fun retain(): Any? = null
     fun close(keep: Boolean) = Unit
     fun reset() = Unit
+    fun documentReady() = Unit
     companion object { const val enabled = false }
 }

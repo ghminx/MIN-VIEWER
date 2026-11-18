@@ -844,6 +844,7 @@ class MainActivity : Activity() {
             val selected = pageIndex.coerceIn(0, count - 1)
             if (isHwp) {pageIndex=selected;applyHwpViewing()}
             else showPage(selected)
+            documentAi?.documentReady()
             if (isHwp && pendingHwpZoomRestore) {
                 val zoomToRestore = hwpZoom
                 browser?.post {

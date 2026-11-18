@@ -105,6 +105,8 @@ class UiStyle(val activity: Activity) {
         override fun setColorFilter(filter: ColorFilter?) { paint.colorFilter=filter }
         @Deprecated("Android Drawable 호환성") override fun getOpacity() = PixelFormat.TRANSLUCENT
     }
+    // AppCompat 테마·Activity 대신 네이티브 위젯과 직접 그린 아이콘을 사용하는 공통 UI.
+    @android.annotation.SuppressLint("AppCompatCustomView")
     fun button(label: String, icon: String? = null, color: Int = text, action: () -> Unit): Button {
         val button = if (icon == null) Button(activity) else object : Button(activity) {
             private val pen = Paint(Paint.ANTI_ALIAS_FLAG)

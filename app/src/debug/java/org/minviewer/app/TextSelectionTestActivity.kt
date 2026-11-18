@@ -32,6 +32,8 @@ class TextSelectionTestActivity : Activity() {
             val w=paint.measureText(c.toString())
             glyphs.add(TextGlyph(c.toString(),x/800f,260f/1000f,(x+w)/800f,300f/1000f,""));x+=w
         }
+        // 제품과 같은 네이티브 ImageView 경로를 검증하는 시험 화면.
+        @android.annotation.SuppressLint("AppCompatCustomView")
         val image=object:ImageView(this) {
             override fun onDraw(c:Canvas) {super.onDraw(c);selection.draw(c,this)}
         }.apply {setImageBitmap(bitmap);setTag(R.id.pdf_page_index,0);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="선택 시험 문서"}

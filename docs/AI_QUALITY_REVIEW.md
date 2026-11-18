@@ -31,6 +31,7 @@
 - 실제 실행 절차: `tests/ai-assistant-phone.mjs`, `tests/ai-actions-phone.mjs`, `tests/ai-format-phone.mjs`
 - 로컬 원시 결과: `.research/ai-ui-physical/actions-page.json`, `actions-selection.json`, `actions-all-selected.json` 및 각 PNG·XML임. 추적 제외 자료이며 저장소 문서는 핵심 판정과 한계를 보존함.
 - 위 원시 결과는 표시 기호 정리 전 응답도 포함함. 표시 수정과 모델 내용 정확성 개선을 혼동하지 않음.
+- 번역의 고정 시험 문단·기준 번역·용어·수치 체크리스트와 저장 응답 재검토는 [번역 품질 평가 준비](AI_TRANSLATION_EVALUATION.md)를 따름. 새 기기 호출과 기존 응답 검토를 구분함.
 
 ## 후속 실문서 평가 준비 · Transformer 원논문
 

@@ -31,13 +31,13 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
     private val ui = UiStyle(activity)
     private var session = retained as? AiSession ?: AiSession(NanoAiEngine())
     private var alive = true
-    private var sourceGeneration = 0
-    private var loading = false
+    private val loading get()=session.state.loadingSource
     private var expanded: Boolean
         get()=session.expanded
         set(value){session.expanded=value}
     private var panelTouch = false
     private var wasOpen = false
+    private var renderedCompact=false
     private var selectedSource: AiSource?
         get()=session.selectedSource
         set(value){session.selectedSource=value}
@@ -49,7 +49,10 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
         elevation=ui.dp(3).toFloat()
     }
     val view: LinearLayout = object: LinearLayout(activity) {
-        override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {super.onSizeChanged(w,h,oldw,oldh);layoutPanel()}
+        override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
+            super.onSizeChanged(w,h,oldw,oldh);layoutPanel()
+            if(panelMode().compact!=renderedCompact)post {if(alive)render()}
+        }
     }.apply {
         document.contentDescription="문서 영역"
         addView(document,LinearLayout.LayoutParams(-1,0,1f));addView(panel)
@@ -67,22 +70,19 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
     }
     private fun loadCurrent() {
         beforeOpen()
-        val token=++sourceGeneration
-        loading=true;session.reopen()
-        load { outcome -> activity.runOnUiThread {
-            if(!alive||token!=sourceGeneration)return@runOnUiThread
-            loading=false
-            outcome.onSuccess {session.show(it,session.state.task)}.onFailure {session.fail(it.message ?: "원문을 읽을 수 없습니다.")}
-        } }
+        session.loadSource(load)
+    }
+    fun documentReady() {
+        if(session.state.open&&session.state.source==null&&!loading)loadCurrent()
     }
     fun selected(text:String,page:Int,task:String) {
-        sourceGeneration++;loading=false;beforeOpen()
+        beforeOpen()
         selectedSource=AiSource(page,text,true)
         session.show(selectedSource!!,when(task){"translate"->AiTask.TRANSLATE;"summary"->AiTask.SUMMARY;else->AiTask.EXPLAIN})
     }
     fun hide():Boolean {
         if(!session.state.open)return false
-        sourceGeneration++;loading=false;session.hide()
+        session.hide()
         (activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(view.windowToken,0)
         return true
     }
@@ -94,20 +94,24 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
     }
     fun retain():Any = session
     fun close(keep:Boolean) {
-        alive=false;sourceGeneration++;session.observer=null
-        if(!keep)session.close()
+        alive=false
+        if(keep)session.detach()else session.close()
     }
     fun reset() {
-        sourceGeneration++;loading=false;selectedSource=null;question=""
+        selectedSource=null;question=""
         session.observer=null;session.close();session=AiSession(NanoAiEngine());bind();render()
     }
 
-    private fun layoutPanel() {
+    private fun panelMode():AiPanelLayout {
         val width=if(view.width>0)view.width else activity.resources.displayMetrics.widthPixels
         val height=if(view.height>0)view.height else activity.resources.displayMetrics.heightPixels-ui.dp(100)
         val w=width/activity.resources.displayMetrics.density;val h=height/activity.resources.displayMetrics.density
-        val side=w>=720 || (w>=600&&h<480)
-        val full=session.state.open&&((expanded&&h<480)||(!side&&h<360))
+        return aiPanelLayout(w,h,activity.resources.configuration.fontScale,session.state.open,expanded)
+    }
+    private fun layoutPanel() {
+        val width=if(view.width>0)view.width else activity.resources.displayMetrics.widthPixels
+        val height=if(view.height>0)view.height else activity.resources.displayMetrics.heightPixels-ui.dp(100)
+        val mode=panelMode();val side=mode.side;val full=mode.full
         view.orientation=if(side)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         document.visibility=if(full)View.GONE else View.VISIBLE
         val docParams=if(side)LinearLayout.LayoutParams(0,-1,1f)else LinearLayout.LayoutParams(-1,0,1f)
@@ -129,7 +133,7 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
         layoutPanel()
         if(!state.open){wasOpen=false;return}
         val header=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(16),0,ui.dp(4),0)}
-        header.addView(ui.label("AI 도우미",16f,true).apply {gravity=Gravity.CENTER_VERTICAL},LinearLayout.LayoutParams(0,ui.dp(48),1f))
+        header.addView(ui.label("AI 도우미",16f,true).apply {gravity=Gravity.CENTER_VERTICAL},LinearLayout.LayoutParams(0,-2,1f))
         header.addView(ui.button(if(expanded)"AI 패널 줄이기"else"AI 패널 크게 보기","화면 맞춤") {expanded=!expanded;render()},LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)))
         header.addView(ui.button("AI 패널 닫기","닫기"){hide()},LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)))
         panel.addView(header)
@@ -139,8 +143,9 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
             AlertDialog.Builder(activity).setTitle("처리할 범위").setItems(options) {_,index->
                 if(index==0)loadCurrent()else session.show(selectedSource!!,state.task)
             }.show()
-        }.apply {isEnabled=!state.busy&&!loading;background=ui.rounded(ui.background,10,ui.line)},LinearLayout.LayoutParams(0,ui.dp(48),1f))
-        val short=view.height>0&&view.height<ui.dp(420)
+        }.apply {isEnabled=!state.busy&&!loading;background=ui.rounded(ui.background,10,ui.line)},LinearLayout.LayoutParams(0,-2,1f))
+        val short=panelMode().compact
+        renderedCompact=short
         if(short)scopeRow.addView(ui.button(state.task.label+" ▾") {
             val tasks=listOf(AiTask.SUMMARY,AiTask.EXPLAIN,AiTask.TRANSLATE)
             AlertDialog.Builder(activity).setTitle("AI 작업").setItems(tasks.map{it.label}.toTypedArray()){_,index->session.choose(tasks[index])}.show()
@@ -153,14 +158,14 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
                 isSelected=task==state.task;isEnabled=!state.busy&&!loading
                 background=ui.rounded(if(isSelected)ui.selected else ui.background,10)
                 setTextColor(if(isSelected&&!ui.dark)ui.navy else ui.text)
-            },LinearLayout.LayoutParams(0,ui.dp(48),1f).apply {marginEnd=ui.dp(4)})
+            },LinearLayout.LayoutParams(0,-2,1f).apply {marginEnd=ui.dp(4)})
         }
         if(!short)panel.addView(tabs)
         val body=LinearLayout(activity).apply {orientation=LinearLayout.VERTICAL;setPadding(ui.dp(16),ui.dp(10),ui.dp(16),ui.dp(16))}
         val scroll=ScrollView(activity).apply {contentDescription="AI 결과 스크롤";isFillViewport=false;addView(body)}
         panel.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
         fun line(text:String,size:Float=14f,bold:Boolean=false) {body.addView(ui.label(text,size,bold).apply {setPadding(0,0,0,ui.dp(12));setLineSpacing(ui.dp(3).toFloat(),1f)})}
-        if(loading)line("원문을 준비하고 있습니다…")
+        if(loading||(state.source==null&&state.error.isEmpty()))line("원문을 준비하고 있습니다…")
         else {
             state.source?.let {source->
                 if(state.result.isEmpty())body.addView(ui.label("텍스트 원문 미리보기 · ${source.page+1}쪽 · 총 ${source.text.length}자\n"+source.text.take(180),12f,color=ui.muted).apply {
@@ -171,9 +176,9 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
             if(state.task==AiTask.TRANSLATE)body.addView(ui.button("번역 언어 · ${state.language}") {
                 val languages=arrayOf("영어","한국어","일본어")
                 AlertDialog.Builder(activity).setTitle("번역 언어").setItems(languages){_,index->session.choose(AiTask.TRANSLATE,languages[index])}.show()
-            }.apply {isEnabled=!state.busy},LinearLayout.LayoutParams(-1,ui.dp(48)))
+            }.apply {isEnabled=!state.busy},LinearLayout.LayoutParams(-1,-2))
             if(state.busy) {
-                line(if(state.preparing)"AI 모델을 준비하는 중…"else"기기에서 ${state.task.label}하는 중…",16f,true)
+                line(if(state.preparing)"AI 모델을 준비하는 중…"else"기기에서 ${(state.requestTask?:state.task).label}하는 중…",16f,true)
                 body.addView(ui.button("요청 취소"){session.cancel()})
             } else if(state.error.isNotEmpty()) {
                 line(state.error)
@@ -182,11 +187,12 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
                         .setMessage("Google AICore가 필요한 모델을 다운로드합니다. 네트워크와 저장 공간을 사용하며 문서 처리는 자동 실행하지 않습니다.")
                         .setNegativeButton("취소",null).setPositiveButton("준비하기"){_,_->session.prepare()}.show()
                 })
-                else if(state.source!=null)body.addView(ui.button("다시 요청하기"){session.run()})
+                else if(state.source!=null)body.addView(ui.button("다시 요청하기"){session.retry()})
                 else body.addView(ui.button("원문 다시 읽기"){loadCurrent()})
             } else if(state.result.isNotEmpty()) {
-                val result=AiResultText.format(state.result,literal=state.task==AiTask.TRANSLATE)
-                val title=when(state.task){AiTask.SUMMARY->"핵심 요약";AiTask.EXPLAIN->"쉽게 풀어보기";AiTask.TRANSLATE->"${state.language} 번역";AiTask.QUESTION->"질문에 대한 답변"}
+                val resultTask=state.requestTask?:state.task
+                val result=AiResultText.format(state.result,literal=resultTask==AiTask.TRANSLATE)
+                val title=when(resultTask){AiTask.SUMMARY->"핵심 요약";AiTask.EXPLAIN->"쉽게 풀어보기";AiTask.TRANSLATE->"${state.language} 번역";AiTask.QUESTION->"질문에 대한 답변"}
                 body.addView(ui.label(title,21f,true).apply {setPadding(0,ui.dp(8),0,ui.dp(8))})
                 body.addView(ui.label((if(state.source!!.selected)"선택한 글"else"현재 페이지")+" · ${state.source.page+1}쪽",12f,color=ui.muted).apply {setPadding(0,0,0,ui.dp(24))})
                 val styled=SpannableString(result.text)
@@ -206,19 +212,19 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
                 resultActions.addView(ui.button("결과 복사") {
                     (activity.getSystemService(Activity.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("AI 결과",result.text))
                     Toast.makeText(activity,"복사했습니다",Toast.LENGTH_SHORT).show()
-                },LinearLayout.LayoutParams(0,ui.dp(48),1f).apply {marginEnd=ui.dp(8)})
-                resultActions.addView(ui.button("원문 ${state.source.page+1}쪽 보기"){hide();go(state.source.page)},LinearLayout.LayoutParams(0,ui.dp(48),1f))
+                },LinearLayout.LayoutParams(0,-2,1f).apply {marginEnd=ui.dp(8)})
+                resultActions.addView(ui.button("원문 ${state.source.page+1}쪽 보기"){hide();go(state.source.page)},LinearLayout.LayoutParams(0,-2,1f))
                 body.addView(resultActions)
                 body.addView(ui.label("AI가 생성한 내용으로, 원문과 다를 수 있어요.",12f,color=ui.muted).apply {setLineSpacing(0f,1.5f);setPadding(0,0,0,ui.dp(16))})
             } else if(state.source!=null) {
                 line(if(state.task==AiTask.SUMMARY)"핵심 내용을 짧게 정리해 드려요."else if(state.task==AiTask.EXPLAIN)"원문의 뜻과 주요 용어를 쉽게 풀어드려요."else"원문을 유지하고 번역 결과를 표시해요.")
-                body.addView(ui.button("${state.task.label}하기"){session.run()}.apply {setTextColor(Color.WHITE);background=ui.rounded(ui.navy,12)},LinearLayout.LayoutParams(-1,ui.dp(48)))
+                body.addView(ui.button(if(state.retryReady)"${(state.requestTask?:state.task).label} 다시 요청하기"else"${state.task.label}하기"){if(state.retryReady)session.retry()else session.run()}.apply {setTextColor(Color.WHITE);background=ui.rounded(ui.navy,12)},LinearLayout.LayoutParams(-1,-2))
             }
         }
         if(state.result.isNotEmpty()&&!state.busy) {
             val row=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(ui.dp(12),ui.dp(4),ui.dp(4),ui.dp(6))}
             val input=EditText(activity).apply {
-                contentDescription="추가 질문";hint="이 내용에 이어서 질문";setSingleLine();setText(question);textSize=13f;setTextColor(ui.text);setHintTextColor(ui.muted)
+                contentDescription="추가 질문";hint="이 내용에 이어서 질문";setSingleLine();setText(question);textSize=13f;minimumHeight=ui.dp(48);setTextColor(ui.text);setHintTextColor(ui.muted)
                 typeface=activity.resources.getFont(R.font.pretendard_regular);imeOptions=EditorInfo.IME_ACTION_SEND
                 addTextChangedListener(object:TextWatcher {
                     override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int)=Unit
@@ -228,8 +234,8 @@ class DocumentAi(private val activity: Activity, controls: ViewerControls, priva
             }
             fun submit() {if(question.isNotBlank()){val typed=question;question="";(activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(input.windowToken,0);session.run(typed)}}
             input.setOnEditorActionListener {_,action,_->if(action==EditorInfo.IME_ACTION_SEND){submit();true}else false}
-            row.addView(input,LinearLayout.LayoutParams(0,ui.dp(48),1f));row.addView(ui.button("질문 보내기","다음"){submit()},LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)))
-            panel.addView(row)
+            row.addView(input,LinearLayout.LayoutParams(0,-2,1f));row.addView(ui.button("질문 보내기","다음"){submit()},LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)))
+            if(short)body.addView(row)else panel.addView(row)
         }
         if(!wasOpen&&android.animation.ValueAnimator.areAnimatorsEnabled())panel.post {
             if(alive&&session.state.open){panel.translationY=ui.dp(18).toFloat();panel.alpha=.4f;panel.animate().translationY(0f).alpha(1f).setDuration(220).start()}

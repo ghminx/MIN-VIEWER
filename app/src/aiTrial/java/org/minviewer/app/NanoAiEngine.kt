@@ -46,7 +46,7 @@ class NanoAiEngine : AiEngine {
         }
     }
 
-    override fun prepare(request: AiRequest, receive: (Result<Unit>) -> Unit): () -> Unit {
+    override fun prepare(receive: (Result<Unit>) -> Unit): () -> Unit {
         val job=worker.submit {
             receive(runCatching {
                 val callback=object:DownloadCallback {}
